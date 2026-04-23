@@ -1,0 +1,69 @@
+name: IR Monitor
+
+on:
+  schedule:
+    # Runs at 00:00, 03:00, 06:00, 09:00, 12:00 UTC
+    # = 07:00, 10:00, 13:00, 16:00, 19:00 ICT (UTC+7)
+    - cron: "0 0,3,6,9,12 * * 1-5"   # weekdays only
+  workflow_dispatch:                   # allows manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout including the db file (if it exists) ──────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # fetch full history so we can commit back
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 3. Playwright ─────────────────────────────────────────────────────
+      - name: Install Playwright + Chromium
+        run: |
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
+
+      # ── 4. Write .env from GitHub Secrets ─────────────────────────────────
+      - name: Create .env
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          HEADLESS=true
+          SEED_ON_FIRST_RUN=true
+          TIMEZONE=Asia/Ho_Chi_Minh
+          EOF
+
+      # ── 5. Ensure data/ folder exists (first run) ─────────────────────────
+      - name: Prepare data directory
+        run: mkdir -p data
+
+      # ── 6. Run one scrape cycle ───────────────────────────────────────────
+      - name: Run scraper
+        run: python main.py --once
+
+      # ── 7. Commit the updated SQLite DB back to the repo ──────────────────
+      #    This is how state persists between runs (no external DB needed).
+      - name: Commit updated database
+        run: |
+          git config user.name  "IR Monitor Bot"
+          git config user.email "ir-monitor-bot@users.noreply.github.com"
+          git add data/ir_monitor.db
+          # Only commit if the DB actually changed
+          git diff --cached --quiet || git commit -m "chore: update IR monitor DB [skip ci]"
+          git push
