@@ -158,15 +158,21 @@ class PlaywrightScraper:
         seen_urls: set[str] = set()
 
         for node in nodes:
-            # Title
-            title_el = node.select_one(site["title"]) if site.get("title") else None
-            title = (title_el.get_text(" ", strip=True) if title_el else "").strip()
+            # When the item node itself is the <a> tag (self_is_link sites)
+            if site.get("self_is_link") and node.name == "a":
+                title = node.get_text(" ", strip=True).strip()
+                href = (node.get("href") or "").strip()
+                pub = None
+            else:
+                # Title
+                title_el = node.select_one(site["title"]) if site.get("title") else None
+                title = (title_el.get_text(" ", strip=True) if title_el else "").strip()
 
-            # Link
-            link_el = node.select_one(site["link"]) if site.get("link") else None
-            if not link_el and title_el and title_el.name == "a":
-                link_el = title_el
-            href = (link_el.get("href") or "").strip() if link_el else ""
+                # Link
+                link_el = node.select_one(site["link"]) if site.get("link") else None
+                if not link_el and title_el and title_el.name == "a":
+                    link_el = title_el
+                href = (link_el.get("href") or "").strip() if link_el else ""
             if not href or href.startswith(("#", "javascript:", "mailto:")):
                 continue
             url = _absolutize(base, href)
@@ -177,12 +183,28 @@ class PlaywrightScraper:
                 # allow subdomains of base (e.g. ir.vietjetair.com base)
                 pass
 
-            # Date
-            pub = None
-            if site.get("date"):
-                date_el = node.select_one(site["date"])
-                if date_el:
-                    pub = _parse_date(date_el.get_text(" ", strip=True), site.get("date_formats", []))
+            # Date (skip for self_is_link sites — pub already set to None above)
+            if not site.get("self_is_link"):
+                pub = None
+                if site.get("date"):
+                    date_el = node.select_one(site["date"])
+                    if date_el:
+                        pub = _parse_date(date_el.get_text(" ", strip=True), site.get("date_formats", []))
+
+            # Vietjet: date prefix "17/04/2026: headline" → strip to get clean title
+            if site.get("strip_date_prefix"):
+                title = re.sub(r"^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\s*:\s*", "", title).strip()
+
+            # ACV: date suffix "headline (123) 08:34 | 16/04/2026" → extract date, clean title
+            if site.get("strip_date_suffix"):
+                m = re.search(r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*$", title)
+                if m:
+                    pub = _parse_date(m.group(1), site.get("date_formats", []))
+                    title = title[:m.start()].rstrip("| :0123456789").strip()
+
+            # SASCO: second link for each article has the full URL as its text — skip it
+            if site.get("filter_url_text_links") and title.startswith("http"):
+                continue
 
             if not title or len(title) < 5:
                 continue
