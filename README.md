@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # IR Monitor — Vietnamese Equity IR/News → Telegram
 
 Headless-browser monitor for 11 Vietnamese listed/unlisted company IR pages.
@@ -142,3 +143,6 @@ loud rather than silent.
 
 If you scale up to dozens of sites, consider adding a persistent-cookies
 option and splitting into multiple browser contexts per run.
+=======
+# ir-monitor
+>>>>>>> ab43391403fb3e5649f01e5ffa6d28a5625227fe
