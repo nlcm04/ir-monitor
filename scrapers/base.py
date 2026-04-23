@@ -110,7 +110,13 @@ class PlaywrightScraper:
         return ctx
 
     async def scrape(self, site: dict) -> list[dict]:
-        """Scrape one site using its selector config. Raises ScraperError on drift."""
+        """Scrape one site. Routes to API-intercept mode when configured."""
+        if site.get("intercept_url_contains"):
+            return await self._scrape_api_intercept(site)
+        return await self._scrape_html(site)
+
+    async def _scrape_html(self, site: dict) -> list[dict]:
+        """Standard HTML scrape via CSS selectors."""
         ctx = await self._new_context()
         page: Page = await ctx.new_page()
         timeout = int(os.getenv("NAV_TIMEOUT_MS", "45000"))
@@ -127,7 +133,6 @@ class PlaywrightScraper:
             if site.get("scroll"):
                 await self._auto_scroll(page)
 
-            # Small polite jitter before reading DOM
             await asyncio.sleep(random.uniform(0.8, 2.0))
             html = await page.content()
         finally:
@@ -140,6 +145,93 @@ class PlaywrightScraper:
                 f"No items parsed for {site['key']} — selectors may be stale"
             )
         return items
+
+    async def _scrape_api_intercept(self, site: dict) -> list[dict]:
+        """Load the page, intercept JSON API responses, and parse them directly.
+
+        Useful for sites that render news via JavaScript/AJAX (Dohaco FPTS widget,
+        Vietnam Airlines AEM) where CSS selectors can't reach the content.
+        """
+        import json as _json
+
+        pattern = site["intercept_url_contains"]
+        captured: list[dict] = []
+
+        ctx = await self._new_context()
+        page: Page = await ctx.new_page()
+        timeout = int(os.getenv("NAV_TIMEOUT_MS", "45000"))
+
+        async def on_response(response):
+            if pattern in response.url:
+                try:
+                    data = await response.json()
+                    captured.append(data)
+                except Exception:
+                    pass
+
+        page.on("response", on_response)
+        try:
+            log.info("[%s] API-intercept GET %s", site["key"], site["url"])
+            await page.goto(site["url"], wait_until="networkidle", timeout=timeout)
+            await asyncio.sleep(5)  # allow lazy API calls to fire
+        finally:
+            await page.close()
+            await ctx.close()
+
+        if not captured:
+            raise ScraperError(
+                f"No API responses intercepted for {site['key']} — "
+                f"pattern '{pattern}' not matched"
+            )
+
+        parser = site.get("intercept_parser", "generic")
+        items: list[dict] = []
+
+        if parser == "fpts":
+            # FPTS API: multiple requests (cbtt=0 and cbtt=1). Each response is
+            # {"Data": {"Table1": [{"Title":..., "DatePub":..., "URL":...}]}}
+            seen_ids: set = set()
+            for resp in captured:
+                for row in resp.get("Data", {}).get("Table1", []):
+                    sid = row.get("SID")
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+                    title = (row.get("Title") or "").strip()
+                    url = (row.get("URL") or "").replace("\\", "/")
+                    if not url.startswith("http"):
+                        url = "https://file.fpts.com.vn" + url
+                    pub = _parse_date(row.get("DatePub", ""), ["%d/%m/%Y %H:%M"])
+                    if title and url:
+                        items.append({"title": title, "url": url, "published": pub})
+
+        elif parser == "vna_jcr":
+            # VNA AEM API: {"YYYY": {"items": [{"path":..., "title":...}]}}
+            # Multiple responses (one per year). Merge all items.
+            seen_paths: set = set()
+            base_article_url = site.get("article_base_url", "")
+            for resp in captured:
+                for year_data in resp.values():
+                    if not isinstance(year_data, dict):
+                        continue
+                    for item in year_data.get("items", []):
+                        path = item.get("path", "")
+                        if path in seen_paths:
+                            continue
+                        seen_paths.add(path)
+                        title = (item.get("title") or "").strip()
+                        # Derive public URL from the last path segment
+                        slug = path.rstrip("/").split("/")[-1]
+                        url = f"{base_article_url}/{slug}" if base_article_url else path
+                        pub = _parse_date(item.get("publishedDate", ""), ["%Y-%m-%dT%H:%M:%S"])
+                        if title and url:
+                            items.append({"title": title, "url": url, "published": pub})
+
+        if not items:
+            raise ScraperError(
+                f"API responses captured but no items parsed for {site['key']}"
+            )
+        return items[:40]
 
     @staticmethod
     async def _auto_scroll(page: Page, steps: int = 6) -> None:
