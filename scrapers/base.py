@@ -22,7 +22,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from config import USER_AGENTS
+from config import FIREFOX_HEADERS, USER_AGENTS
 from logger import get_logger
 
 log = get_logger(__name__)
@@ -98,10 +98,9 @@ class PlaywrightScraper:
             user_agent=ua,
             locale="vi-VN",
             viewport={"width": 1366, "height": 900},
-            extra_http_headers={
-                "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
+            # Full Firefox-style headers — makes the browser look like a real
+            # Firefox session rather than headless Chromium to anti-bot checks.
+            extra_http_headers=FIREFOX_HEADERS,
         )
         # Strip the webdriver flag that some anti-bot checks look for.
         await ctx.add_init_script(
@@ -118,6 +117,8 @@ class PlaywrightScraper:
             try:
                 if site.get("intercept_url_contains"):
                     return await self._scrape_api_intercept(site)
+                if site.get("mode") == "requests":
+                    return await self._scrape_requests(site)
                 return await self._scrape_html(site)
             except (ScraperError, Exception) as e:
                 last_exc = e
@@ -135,6 +136,40 @@ class PlaywrightScraper:
                     raise
 
         raise last_exc  # should never reach here
+
+    async def _scrape_requests(self, site: dict) -> list[dict]:
+        """Lightweight HTTP-only scrape for server-side-rendered pages.
+
+        Bypasses Playwright entirely — no browser automation fingerprint, no
+        waiting for third-party CDN/analytics scripts that hang on cloud IPs.
+        Uses aiohttp with full Firefox headers so the server sees a real browser.
+        """
+        import aiohttp
+
+        ua = random.choice(USER_AGENTS)
+        headers = {**FIREFOX_HEADERS, "User-Agent": ua}
+        # Merge any site-level extra headers (e.g. Referer)
+        headers.update(site.get("extra_headers", {}))
+
+        timeout = aiohttp.ClientTimeout(total=60)
+        connector = aiohttp.TCPConnector(ssl=False)  # skip cert issues on VN hosting
+
+        log.info("[%s] requests-mode GET %s", site["key"], site["url"])
+        async with aiohttp.ClientSession(
+            headers=headers,
+            connector=connector,
+            timeout=timeout,
+        ) as session:
+            async with session.get(site["url"]) as resp:
+                resp.raise_for_status()
+                html = await resp.text(errors="replace")
+
+        items = self._parse(html, site)
+        if not items:
+            raise ScraperError(
+                f"No items parsed for {site['key']} (requests mode) — selectors may be stale"
+            )
+        return items
 
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""

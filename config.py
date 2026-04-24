@@ -109,15 +109,17 @@ SITES = [
         "key": "vietjet",
         "company": "Vietjet Air (VJC)",
         "url": "https://ir.vietjetair.com/Home/Menu/thong-tin-khac",
-        "wait_until": "networkidle",   # JS-heavy page — wait for full load on cloud servers
-        "wait_for": ".linkPdf",
+        # Page is server-side rendered — no JS needed, so use lightweight aiohttp
+        # instead of Playwright.  Playwright's networkidle hangs on GitHub Actions
+        # because the page loads Google Analytics/Fonts from US CDN which is slow.
+        "mode": "requests",
         "item": ".linkPdf",
         "title": "a",
         "link": "a",
         "date": "a",
         "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
         "base_url": "https://ir.vietjetair.com",
-        "scroll": True,
+        "scroll": False,
         "strip_date_prefix": True,
     },
     {
@@ -194,10 +196,40 @@ FLAG_KEYWORDS = [
     ("sáp nhập", "🤝 M&A"),
 ]
 
-# Realistic User-Agent pool (rotated per-scrape)
+# ---------------------------------------------------------------------------
+# Realistic User-Agent pool — rotated randomly per request.
+# Heavily weighted toward Firefox (Gecko/Mozilla) since many Vietnamese IR
+# sites are less aggressive about blocking Firefox versus headless Chrome.
+# ---------------------------------------------------------------------------
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+    # Firefox on Windows (most trusted by VN sites)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    # Firefox on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:127.0) Gecko/20100101 Firefox/127.0",
+    # Firefox on Linux (matches GitHub Actions Ubuntu runner)
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    # Chrome on Windows (fallback)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 ]
+
+# Full HTTP headers that accompany each Firefox UA — makes requests look like
+# a real browser session (Content-Type negotiation, language, encoding, etc.)
+FIREFOX_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.7,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+}
