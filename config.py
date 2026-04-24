@@ -109,17 +109,15 @@ SITES = [
         "key": "vietjet",
         "company": "Vietjet Air (VJC)",
         "url": "https://ir.vietjetair.com/Home/Menu/thong-tin-khac",
+        "wait_until": "networkidle",   # JS-heavy page — wait for full load on cloud servers
         "wait_for": ".linkPdf",
         "item": ".linkPdf",
         "title": "a",
         "link": "a",
-        # Date is embedded at the start of the link text: "17/04/2026: Article title"
-        # Setting date to "a" lets _parse_date extract it via regex from the full text.
         "date": "a",
         "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
         "base_url": "https://ir.vietjetair.com",
         "scroll": True,
-        # Strip "dd/mm/yyyy: " prefix from title so the headline is clean in Telegram
         "strip_date_prefix": True,
     },
     {
@@ -135,8 +133,8 @@ SITES = [
         "key": "acv",
         "company": "ACV (Tổng Công ty Cảng HKVN)",
         "url": "https://acv.vn/vi/tin-tuc/thong-bao-co-dong",
+        "wait_until": "networkidle",   # Next.js site — needs full JS load on cloud servers
         "wait_for": "a[href*='/vi/co-dong/']",
-        # Each <a> is the item itself; title text ends with "HH:MM | DD/MM/YYYY"
         "item": "a[href*='/vi/co-dong/']",
         "title": None,
         "link": None,
@@ -145,7 +143,7 @@ SITES = [
         "base_url": "https://acv.vn",
         "scroll": True,
         "self_is_link": True,
-        "strip_date_suffix": True,  # removes trailing "HH:MM | DD/MM/YYYY" from title
+        "strip_date_suffix": True,
     },
     {
         "key": "vietnamairlines",

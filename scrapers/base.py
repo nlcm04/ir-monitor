@@ -110,19 +110,44 @@ class PlaywrightScraper:
         return ctx
 
     async def scrape(self, site: dict) -> list[dict]:
-        """Scrape one site. Routes to API-intercept mode when configured."""
-        if site.get("intercept_url_contains"):
-            return await self._scrape_api_intercept(site)
-        return await self._scrape_html(site)
+        """Scrape one site with automatic retries on timeout."""
+        max_retries = int(os.getenv("SCRAPER_RETRIES", "2"))
+        last_exc: Exception = RuntimeError("no attempts made")
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if site.get("intercept_url_contains"):
+                    return await self._scrape_api_intercept(site)
+                return await self._scrape_html(site)
+            except (ScraperError, Exception) as e:
+                last_exc = e
+                is_timeout = "timeout" in str(e).lower() or "TimeoutError" in type(e).__name__
+                is_scraper_err = isinstance(e, ScraperError)
+
+                if attempt < max_retries and (is_timeout or is_scraper_err):
+                    wait = 5 * attempt
+                    log.warning(
+                        "[%s] attempt %d/%d failed (%s) — retrying in %ds",
+                        site["key"], attempt, max_retries, type(e).__name__, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+
+        raise last_exc  # should never reach here
 
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""
         ctx = await self._new_context()
         page: Page = await ctx.new_page()
-        timeout = int(os.getenv("NAV_TIMEOUT_MS", "45000"))
+        timeout = int(os.getenv("NAV_TIMEOUT_MS", "90000"))
+
+        # Sites that need full JS execution use networkidle; others use faster domcontentloaded
+        load_strategy = site.get("wait_until", "domcontentloaded")
+
         try:
-            log.info("[%s] GET %s", site["key"], site["url"])
-            await page.goto(site["url"], wait_until="domcontentloaded", timeout=timeout)
+            log.info("[%s] GET %s (strategy=%s)", site["key"], site["url"], load_strategy)
+            await page.goto(site["url"], wait_until=load_strategy, timeout=timeout)
 
             if site.get("wait_for"):
                 try:
@@ -133,7 +158,7 @@ class PlaywrightScraper:
             if site.get("scroll"):
                 await self._auto_scroll(page)
 
-            await asyncio.sleep(random.uniform(0.8, 2.0))
+            await asyncio.sleep(random.uniform(1.5, 3.0))
             html = await page.content()
         finally:
             await page.close()
@@ -159,7 +184,7 @@ class PlaywrightScraper:
 
         ctx = await self._new_context()
         page: Page = await ctx.new_page()
-        timeout = int(os.getenv("NAV_TIMEOUT_MS", "45000"))
+        timeout = int(os.getenv("NAV_TIMEOUT_MS", "90000"))
 
         async def on_response(response):
             if pattern in response.url:

@@ -15,7 +15,7 @@ jobs:
     steps:
       # ── 1. Checkout including the db file (if it exists) ──────────────────
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # fetch full history so we can commit back
           fetch-depth: 1
@@ -23,7 +23,7 @@ jobs:
 
       # ── 2. Python setup ───────────────────────────────────────────────────
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -47,6 +47,8 @@ jobs:
           HEADLESS=true
           SEED_ON_FIRST_RUN=true
           TIMEZONE=Asia/Ho_Chi_Minh
+          NAV_TIMEOUT_MS=90000
+          SCRAPER_RETRIES=2
           EOF
 
       # ── 5. Ensure data/ folder exists (first run) ─────────────────────────
