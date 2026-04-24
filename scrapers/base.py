@@ -94,13 +94,30 @@ class PlaywrightScraper:
     async def _new_context(self) -> BrowserContext:
         assert self._browser is not None
         ua = random.choice(USER_AGENTS)
+
+        # extra_http_headers applies to EVERY request in the context, including
+        # AJAX/XHR calls made by page scripts.  Navigation-specific headers
+        # (Sec-Fetch-Mode: navigate, Sec-Fetch-Site: none, Sec-Fetch-User: ?1,
+        # Upgrade-Insecure-Requests) are WRONG for XHR and will cause CORS/fetch-
+        # metadata checks on APIs to reject the request silently.  Only include
+        # headers that are valid for both navigation and XHR.
+        _CONTEXT_SAFE_HEADERS = {
+            k: v for k, v in FIREFOX_HEADERS.items()
+            if k not in {
+                "Sec-Fetch-Dest",
+                "Sec-Fetch-Mode",
+                "Sec-Fetch-Site",
+                "Sec-Fetch-User",
+                "Upgrade-Insecure-Requests",
+                "Cache-Control",  # navigation-only semantics
+            }
+        }
+
         ctx = await self._browser.new_context(
             user_agent=ua,
             locale="vi-VN",
             viewport={"width": 1366, "height": 900},
-            # Full Firefox-style headers — makes the browser look like a real
-            # Firefox session rather than headless Chromium to anti-bot checks.
-            extra_http_headers=FIREFOX_HEADERS,
+            extra_http_headers=_CONTEXT_SAFE_HEADERS,
         )
         # Strip the webdriver flag that some anti-bot checks look for.
         await ctx.add_init_script(
@@ -223,17 +240,24 @@ class PlaywrightScraper:
 
         async def on_response(response):
             if pattern in response.url:
+                log.info("[%s] intercepted API: %s (HTTP %s)", site["key"], response.url[:120], response.status)
                 try:
                     data = await response.json()
                     captured.append(data)
-                except Exception:
-                    pass
+                    log.info("[%s] captured response (%d bytes)", site["key"], len(str(data)))
+                except Exception as exc:
+                    log.warning("[%s] could not parse intercepted response: %s", site["key"], exc)
 
         page.on("response", on_response)
+        # Default to networkidle for full-JS sites; domcontentloaded is faster for
+        # sites whose AJAX widgets fire quickly (e.g. Dohaco FPTS widget) and where
+        # networkidle would block on unrelated third-party CDN scripts.
+        intercept_wait = site.get("intercept_wait_until", "networkidle")
+        intercept_sleep = int(site.get("intercept_sleep", 5))
         try:
-            log.info("[%s] API-intercept GET %s", site["key"], site["url"])
-            await page.goto(site["url"], wait_until="networkidle", timeout=timeout)
-            await asyncio.sleep(5)  # allow lazy API calls to fire
+            log.info("[%s] API-intercept GET %s (wait=%s)", site["key"], site["url"], intercept_wait)
+            await page.goto(site["url"], wait_until=intercept_wait, timeout=timeout)
+            await asyncio.sleep(intercept_sleep)  # allow lazy API calls to fire
         finally:
             await page.close()
             await ctx.close()

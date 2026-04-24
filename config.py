@@ -27,53 +27,53 @@ SITES = [
         "key": "pacvietnam",
         "company": "PAC Việt Nam",
         "url": "https://pacvietnam.vn/category/tin-tuc/",
-        "wait_for": "article, .post, .elementor-post",
+        # WordPress / Elementor — fully server-side rendered, no JS needed.
+        "mode": "requests",
         "item": "article, .elementor-post",
         "title": "h2 a, h3 a, .elementor-post__title a",
         "link": "h2 a, h3 a, .elementor-post__title a",
         "date": "time, .elementor-post-date, .entry-date",
         "date_formats": ["%B %d, %Y", "%d/%m/%Y", "%Y-%m-%d"],
         "base_url": "https://pacvietnam.vn",
-        "scroll": False,
     },
     {
         "key": "theky",
         "company": "Thế Kỷ (CTCP Sách Thế Kỷ)",
         "url": "https://theky.vn/index.php/tin-tuc/",
-        "wait_for": "h2.eael-post-list-title",
+        # WordPress / Elementor — fully server-side rendered, no JS needed.
+        "mode": "requests",
         "item": "h2.eael-post-list-title",
         "title": "a",
         "link": "a",
         "date": None,
         "date_formats": [],
         "base_url": "https://theky.vn",
-        "scroll": False,
     },
     {
         "key": "ducgiangchem",
         "company": "Hóa chất Đức Giang (DGC)",
         "url": "https://ducgiangchem.vn/en/category/quan-he-co-dong/thong-bao/",
-        "wait_for": "article, .post, .elementor-post, .entry",
+        # WordPress — fully server-side rendered, no JS needed.
+        "mode": "requests",
         "item": "article, .elementor-post, .entry",
         "title": "h2 a, h3 a, .entry-title a, .elementor-post__title a",
         "link": "h2 a, h3 a, .entry-title a, .elementor-post__title a",
         "date": "time, .elementor-post-date, .entry-date, .posted-on",
         "date_formats": ["%B %d, %Y", "%d/%m/%Y", "%Y-%m-%d"],
         "base_url": "https://ducgiangchem.vn",
-        "scroll": False,
     },
     {
         "key": "phutai",
         "company": "Phú Tài (PTB)",
         "url": "https://phutai.com.vn/tin-tuc-va-su-kien/",
-        "wait_for": "div.content-cate",
+        # WordPress — fully server-side rendered, no JS needed.
+        "mode": "requests",
         "item": "div.content-cate",
         "title": "h3.title-cate",   # <h3> holds the text; img link has same href
         "link": "a.img-cate",        # use image link href — same URL, avoids empty-text issue
         "date": None,
         "date_formats": [],
         "base_url": "https://phutai.com.vn",
-        "scroll": False,
     },
     {
         "key": "thienlong",
@@ -125,10 +125,15 @@ SITES = [
     {
         "key": "dohaco",
         "company": "Dohaco Bến Tre (DHC)",
-        "url": "https://dohacobentre.com.vn/quan-he-co-dong",
-        # Page embeds an FPTS IR widget that loads news via AJAX — intercept the API response
+        # The dohacobentre.com.vn page embeds the FPTS IR widget as an <iframe>.
+        # Rather than loading the parent page (which has slow CDN/analytics and
+        # delays the iframe), we load the FPTS IR page directly — it's the same
+        # source the iframe would load, just without the wrapper.
+        "url": "https://ezir.fpts.com.vn/thongtindoanhnghiepclient/DHC",
         "intercept_url_contains": "gateway.fpts.com.vn/news/api/gateway/v1/mobile/list",
         "intercept_parser": "fpts",
+        "intercept_wait_until": "networkidle",  # FPTS page is self-contained, networkidle is reliable
+        "intercept_sleep": 5,
         "base_url": "https://dohacobentre.com.vn",
     },
     {
