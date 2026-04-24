@@ -109,10 +109,12 @@ SITES = [
         "key": "vietjet",
         "company": "Vietjet Air (VJC)",
         "url": "https://ir.vietjetair.com/Home/Menu/thong-tin-khac",
-        # Page is server-side rendered — no JS needed, so use lightweight aiohttp
-        # instead of Playwright.  Playwright's networkidle hangs on GitHub Actions
-        # because the page loads Google Analytics/Fonts from US CDN which is slow.
-        "mode": "requests",
+        # Page is server-side rendered so content is in the initial HTML — we do NOT
+        # need networkidle (which hangs waiting for Google Analytics/CDN from US IPs).
+        # aiohttp returned 403 from GitHub Actions IPs, so we use Playwright which
+        # presents a full browser fingerprint and bypasses the bot check.
+        "wait_until": "domcontentloaded",
+        "wait_for": ".linkPdf",
         "item": ".linkPdf",
         "title": "a",
         "link": "a",
@@ -140,7 +142,11 @@ SITES = [
         "key": "acv",
         "company": "ACV (Tổng Công ty Cảng HKVN)",
         "url": "https://acv.vn/vi/tin-tuc/thong-bao-co-dong",
-        "wait_until": "networkidle",   # Next.js site — needs full JS load on cloud servers
+        # Next.js site. networkidle never settles on GitHub Actions because the
+        # framework keeps prefetch connections open — switch to domcontentloaded
+        # and let wait_for hold until the JS-rendered links appear (up to 90s,
+        # with graceful fallback if it times out).
+        "wait_until": "domcontentloaded",
         "wait_for": "a[href*='/vi/co-dong/']",
         "item": "a[href*='/vi/co-dong/']",
         "title": None,
@@ -166,16 +172,17 @@ SITES = [
         "key": "tasecoairs",
         "company": "Taseco Airs (AST)",
         "url": "https://tasecoairs.vn/thong-tin-co-dong.html",
-        "wait_for": "a[href*='/thong-tin-co-dong/']",
-        # Each item IS the <a> tag itself — no wrapper element
+        # The .html extension and plain <a> link structure indicate SSR — no JS needed.
+        # Playwright was timing out (90s) on GitHub Actions US IPs (server slow from US).
+        # aiohttp bypasses the browser overhead and resolves in < 2s.
+        "mode": "requests",
         "item": "a[href*='/thong-tin-co-dong/']",
-        "title": None,   # use node text directly (see self_is_link handling in parser)
-        "link": None,    # use node href directly
-        "date": None,    # no date exposed on list page
+        "title": None,
+        "link": None,
+        "date": None,
         "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
         "base_url": "https://tasecoairs.vn",
-        "scroll": True,
-        "self_is_link": True,  # tells parser the item node itself is the <a>
+        "self_is_link": True,
     },
 ]
 
