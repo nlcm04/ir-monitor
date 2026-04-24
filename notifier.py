@@ -60,19 +60,31 @@ class Notifier:
         self.chat_id = chat_id
         self.admin_chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID") or chat_id
 
-    async def send_article(self, item: dict) -> bool:
+    async def send_article(self, item: dict, retries: int = 3) -> bool:
         msg = _format_message(item)
-        try:
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=False,
-            )
-            return True
-        except TelegramError as e:
-            log.error("Telegram send failed for %s: %s", item.get("url"), e)
-            return False
+        for attempt in range(1, retries + 1):
+            try:
+                await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=False,
+                    read_timeout=30,
+                    write_timeout=30,
+                    connect_timeout=15,
+                )
+                return True
+            except TelegramError as e:
+                if attempt < retries:
+                    wait = 2 ** attempt  # 2s, 4s
+                    log.warning(
+                        "Telegram send attempt %d/%d failed (%s) — retrying in %ds",
+                        attempt, retries, e, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    log.error("Telegram send failed for %s: %s", item.get("url"), e)
+        return False
 
     async def send_many(self, items: Iterable[dict]) -> int:
         """Send alerts sequentially with small spacing to respect rate limits."""

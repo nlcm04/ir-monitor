@@ -3,7 +3,8 @@ Scrapes every site, takes the latest article from each,
 and sends it to Telegram — ignores the DB so you always get a message.
 
 Usage:
-    python test_live_alerts.py
+    python test_live_alerts.py                    # all 11 sites
+    python test_live_alerts.py acv vietjet        # specific sites only
 """
 
 from __future__ import annotations
@@ -24,13 +25,26 @@ from scrapers.base import PlaywrightScraper, ScraperError
 
 
 async def main() -> None:
+    # Filter sites if keys are provided as CLI args
+    requested = set(sys.argv[1:])
+    if requested:
+        valid = {s["key"] for s in SITES}
+        unknown = requested - valid
+        if unknown:
+            print(f"Unknown key(s): {', '.join(sorted(unknown))}")
+            print(f"Valid keys: {', '.join(s['key'] for s in SITES)}")
+            sys.exit(1)
+        sites = [s for s in SITES if s["key"] in requested]
+    else:
+        sites = list(SITES)
+
     notifier = Notifier()
     results: list[tuple[str, str, str]] = []  # (company, status, detail)
 
-    print(f"\nScraping {len(SITES)} sites and sending latest article from each...\n")
+    print(f"\nScraping {len(sites)} sites and sending latest article from each...\n")
 
     async with PlaywrightScraper() as scraper:
-        for site in SITES:
+        for site in sites:
             print(f"  → {site['company']} ...", end=" ", flush=True)
             try:
                 items = await scraper.scrape(site)
