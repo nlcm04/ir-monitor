@@ -9,6 +9,7 @@ import asyncio
 import os
 import random
 import re
+import socket
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urljoin, urlparse
@@ -30,6 +31,75 @@ log = get_logger(__name__)
 
 class ScraperError(Exception):
     """Raised when a site returns content but no items parse — i.e. layout drift."""
+
+
+# ── Error classification ────────────────────────────────────────────────────
+# Transient = server-side or network failure that is NOT caused by our code.
+# Non-transient = genuine bug (bad selector attribute, missing config key,
+# unexpected data shape) that needs human attention.
+#
+# We only Telegram-alert on non-transient failures so the user doesn't get
+# trained to ignore alerts.  Transient failures are logged and left for the
+# next scheduled cycle to retry naturally.
+
+# HTTP status codes treated as transient: authentication/proxy issues,
+# rate limits, upstream gateway errors, CDN edge hiccups.
+_TRANSIENT_HTTP_STATUSES = frozenset({
+    403,  # often IP-based anti-bot on cloud runners; different IP next cycle
+    408,  # request timeout
+    425,  # too early
+    429,  # rate limit
+    500, 502, 503, 504,    # origin errors
+    520, 521, 522, 523, 524, 525, 526, 527,  # Cloudflare edge errors
+})
+
+# Substrings that, when found in an exception message, indicate a transient
+# network/browser issue.  Playwright and some libraries only surface errors
+# as strings, so we match on text as a fallback.
+_TRANSIENT_MSG_MARKERS = (
+    "timeout", "timed out",
+    "net::err_",                           # chromium net stack
+    "connection refused", "connection reset", "connection closed",
+    "dns_probe", "name_not_resolved",
+    "tunnel_connection_failed",
+    "temporary failure in name resolution",
+    "err_network", "err_internet_disconnected",
+)
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """True iff `exc` reflects a network or server-side failure.
+
+    The function is exhaustive by type first (fast-path for well-known
+    exception classes) and falls back to substring matching on the error
+    message for libraries that raise stringly-typed errors (Playwright).
+
+    Callers should NOT send user-visible alerts for transient errors — just
+    log and move on.  The scheduler's next cycle retries naturally.
+    """
+    # --- Fast path: exact type matches ---
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, PwTimeout, ScraperError)):
+        return True
+    if isinstance(exc, (socket.gaierror, socket.timeout, ConnectionError)):
+        return True
+
+    # --- aiohttp errors (lazy import so base.py stays usable without it) ---
+    try:
+        import aiohttp
+        if isinstance(exc, aiohttp.ClientResponseError):
+            return exc.status in _TRANSIENT_HTTP_STATUSES
+        if isinstance(exc, (
+            aiohttp.ClientConnectionError,
+            aiohttp.ServerTimeoutError,
+            aiohttp.ClientPayloadError,
+        )):
+            return True
+    except ImportError:
+        pass
+
+    # --- Fallback: substring match on message ---
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_MSG_MARKERS)
 
 
 def _absolutize(base_url: str, href: str) -> str:
@@ -168,8 +238,8 @@ class PlaywrightScraper:
         # Merge any site-level extra headers (e.g. Referer)
         headers.update(site.get("extra_headers", {}))
 
+        connector = self._build_aiohttp_connector()
         timeout = aiohttp.ClientTimeout(total=60)
-        connector = aiohttp.TCPConnector(ssl=False)  # skip cert issues on VN hosting
 
         log.info("[%s] requests-mode GET %s", site["key"], site["url"])
         async with aiohttp.ClientSession(
@@ -187,6 +257,43 @@ class PlaywrightScraper:
                 f"No items parsed for {site['key']} (requests mode) — selectors may be stale"
             )
         return items
+
+    @staticmethod
+    def _build_aiohttp_connector():
+        """Construct a TCPConnector with a resilient, fast DNS resolver.
+
+        Uses aiohttp's AsyncResolver (backed by aiodns → c-ares) with Cloudflare
+        and Google public nameservers as a programmatic fallback.  This helps
+        when the runtime host's default resolver is slow or intermittent
+        (e.g. GitHub Actions runners occasionally hit transient DNS latency).
+
+        Falls back gracefully to the default threaded resolver if aiodns is
+        unavailable:
+          - ImportError  → package not installed
+          - RuntimeError → aiodns on Windows requires a SelectorEventLoop
+                            (the default ProactorEventLoop breaks it).
+                            Linux (GitHub Actions) is unaffected.
+        """
+        import aiohttp
+
+        try:
+            from aiohttp.resolver import AsyncResolver  # requires aiodns
+
+            resolver = AsyncResolver(nameservers=[
+                "1.1.1.1",  # Cloudflare primary
+                "8.8.8.8",  # Google primary
+                "1.0.0.1",  # Cloudflare secondary
+                "8.8.4.4",  # Google secondary
+            ])
+            log.info("DNS: using AsyncResolver (Cloudflare + Google)")
+            return aiohttp.TCPConnector(ssl=False, resolver=resolver)
+        except (ImportError, RuntimeError) as e:
+            # aiohttp 3.10+ defaults to AsyncResolver when aiodns is installed —
+            # which means we have to explicitly request ThreadedResolver here,
+            # otherwise the "fallback" connector still tries aiodns and fails.
+            log.debug("custom DNS resolver unavailable (%s) — using ThreadedResolver", e)
+            from aiohttp.resolver import ThreadedResolver
+            return aiohttp.TCPConnector(ssl=False, resolver=ThreadedResolver())
 
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""
@@ -258,6 +365,16 @@ class PlaywrightScraper:
             log.info("[%s] API-intercept GET %s (wait=%s)", site["key"], site["url"], intercept_wait)
             await page.goto(site["url"], wait_until=intercept_wait, timeout=timeout)
             await asyncio.sleep(intercept_sleep)  # allow lazy API calls to fire
+        except PwTimeout:
+            # networkidle never settles on some sites (CDN/analytics keep connections
+            # open forever).  If the target API fired before the timeout, we already
+            # have the data we need — treat as success rather than retrying.
+            if not captured:
+                raise
+            log.warning(
+                "[%s] page load timed out but API already captured (%d responses) — continuing",
+                site["key"], len(captured),
+            )
         finally:
             await page.close()
             await ctx.close()

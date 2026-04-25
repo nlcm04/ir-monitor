@@ -25,7 +25,7 @@ import database
 from config import SITES
 from logger import get_logger
 from notifier import Notifier
-from scrapers.base import PlaywrightScraper, ScraperError
+from scrapers.base import PlaywrightScraper, ScraperError, is_transient_error
 
 load_dotenv()
 log = get_logger(__name__)
@@ -42,19 +42,25 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
                       seed_mode: bool) -> None:
     try:
         items = await scraper.scrape(site)
-    except ScraperError as e:
-        log.error("[%s] scrape error: %s", site["key"], e)
+    except Exception as e:  # noqa: BLE001 — classify below, don't let one site kill the loop
+        if is_transient_error(e):
+            # Server-side or network hiccup (timeout, 403/429/5xx, DNS error,
+            # connection reset, ScraperError after retries).  This is NOT a
+            # bug in our code — the scheduler's next cycle will retry naturally.
+            # Intentionally silent on Telegram to avoid alert fatigue; the
+            # log line is still available for post-mortem debugging.
+            log.warning(
+                "[%s] transient failure — will retry next cycle (%s: %s)",
+                site["key"], type(e).__name__, str(e).splitlines()[0][:200],
+            )
+            return
+        # Non-transient: this is a real bug in our code / config / selectors.
+        # Alert the user so they can fix it.
+        log.exception("[%s] non-transient error — admin alert sent", site["key"])
         await notifier.send_admin(
-            f"⚠️ <b>Scraper failed</b> for <b>{site['company']}</b>\n"
+            f"⚠️ <b>Scraper bug</b> in <b>{site['company']}</b>\n"
             f"<code>{type(e).__name__}: {e}</code>\n"
             f"URL: {site['url']}"
-        )
-        return
-    except Exception as e:  # noqa: BLE001 — catch-all so one site can't kill the loop
-        log.exception("[%s] unexpected error", site["key"])
-        await notifier.send_admin(
-            f"⚠️ <b>Unexpected error</b> scraping <b>{site['company']}</b>\n"
-            f"<code>{type(e).__name__}: {e}</code>"
         )
         return
 
