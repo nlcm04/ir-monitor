@@ -51,7 +51,8 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
             # log line is still available for post-mortem debugging.
             log.warning(
                 "[%s] transient failure — will retry next cycle (%s: %s)",
-                site["key"], type(e).__name__, str(e).splitlines()[0][:200],
+                site["key"], type(e).__name__,
+                (str(e).splitlines() or [type(e).__name__])[0][:200],
             )
             return
         # Non-transient: this is a real bug in our code / config / selectors.
