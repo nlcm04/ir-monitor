@@ -109,19 +109,17 @@ SITES = [
         "key": "vietjet",
         "company": "Vietjet Air (VJC)",
         "url": "https://ir.vietjetair.com/Home/Menu/thong-tin-khac",
-        # Page is server-side rendered so content is in the initial HTML — we do NOT
-        # need networkidle (which hangs waiting for Google Analytics/CDN from US IPs).
-        # aiohttp returned 403 from GitHub Actions IPs, so we use Playwright which
-        # presents a full browser fingerprint and bypasses the bot check.
-        "wait_until": "domcontentloaded",
-        "wait_for": ".linkPdf",
+        # Page is fully server-side rendered — .linkPdf items are in the initial HTML.
+        # Previously used Playwright (403 on aiohttp from GHA IPs), but aiohttp now
+        # works reliably with full Firefox headers. Playwright was getting anti-bot
+        # interstitial pages on GHA US IPs, causing wait_for to time out with 0 items.
+        "mode": "requests",
         "item": ".linkPdf",
         "title": "a",
         "link": "a",
         "date": "a",
         "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
         "base_url": "https://ir.vietjetair.com",
-        "scroll": False,
         "strip_date_prefix": True,
     },
     {
@@ -142,19 +140,15 @@ SITES = [
         "key": "acv",
         "company": "ACV (Tổng Công ty Cảng HKVN)",
         "url": "https://acv.vn/vi/tin-tuc/thong-bao-co-dong",
-        # Next.js site. networkidle never settles on GitHub Actions because the
-        # framework keeps prefetch connections open — switch to domcontentloaded
-        # and let wait_for hold until the JS-rendered links appear (up to 90s,
-        # with graceful fallback if it times out).
-        "wait_until": "domcontentloaded",
-        "wait_for": "a[href*='/vi/co-dong/']",
+        # Next.js site — but links are included in the SSR HTML payload, so aiohttp
+        # is sufficient. Playwright was timing out (page.goto > 90s) on GHA US IPs.
+        "mode": "requests",
         "item": "a[href*='/vi/co-dong/']",
         "title": None,
         "link": None,
         "date": None,
         "date_formats": ["%d/%m/%Y"],
         "base_url": "https://acv.vn",
-        "scroll": True,
         "self_is_link": True,
         "strip_date_suffix": True,
     },
