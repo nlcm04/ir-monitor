@@ -55,11 +55,15 @@ jobs:
       - name: Prepare data directory
         run: mkdir -p data
 
-      # ── 6. Run one scrape cycle ───────────────────────────────────────────
+      # ── 6. Unit-test error handling before committing to a full scrape ──
+      - name: Run error-handling tests
+        run: python test_error_handling.py
+
+      # ── 7. Run one scrape cycle ───────────────────────────────────────────
       - name: Run scraper
         run: python main.py --once
 
-      # ── 7. Commit the updated SQLite DB back to the repo ──────────────────
+      # ── 8. Commit the updated SQLite DB back to the repo ──────────────────
       #    This is how state persists between runs (no external DB needed).
       - name: Commit updated database
         run: |
