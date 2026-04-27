@@ -260,40 +260,18 @@ class PlaywrightScraper:
 
     @staticmethod
     def _build_aiohttp_connector():
-        """Construct a TCPConnector with a resilient, fast DNS resolver.
+        """Construct a TCPConnector for aiohttp requests.
 
-        Uses aiohttp's AsyncResolver (backed by aiodns → c-ares) with Cloudflare
-        and Google public nameservers as a programmatic fallback.  This helps
-        when the runtime host's default resolver is slow or intermittent
-        (e.g. GitHub Actions runners occasionally hit transient DNS latency).
-
-        Falls back gracefully to the default threaded resolver if aiodns is
-        unavailable:
-          - ImportError  → package not installed
-          - RuntimeError → aiodns on Windows requires a SelectorEventLoop
-                            (the default ProactorEventLoop breaks it).
-                            Linux (GitHub Actions) is unaffected.
+        Uses ThreadedResolver (OS system resolver) which is stable across all
+        platforms and aiohttp versions.  AsyncResolver (aiodns) was removed
+        because aiodns 3.2.0 changed the Channel.getaddrinfo() signature in a
+        way that is incompatible with aiohttp 3.10.x, causing a TypeError at
+        request time that bypassed our connector-creation try/except.
         """
         import aiohttp
+        from aiohttp.resolver import ThreadedResolver
 
-        try:
-            from aiohttp.resolver import AsyncResolver  # requires aiodns
-
-            resolver = AsyncResolver(nameservers=[
-                "1.1.1.1",  # Cloudflare primary
-                "8.8.8.8",  # Google primary
-                "1.0.0.1",  # Cloudflare secondary
-                "8.8.4.4",  # Google secondary
-            ])
-            log.info("DNS: using AsyncResolver (Cloudflare + Google)")
-            return aiohttp.TCPConnector(ssl=False, resolver=resolver)
-        except (ImportError, RuntimeError) as e:
-            # aiohttp 3.10+ defaults to AsyncResolver when aiodns is installed —
-            # which means we have to explicitly request ThreadedResolver here,
-            # otherwise the "fallback" connector still tries aiodns and fails.
-            log.debug("custom DNS resolver unavailable (%s) — using ThreadedResolver", e)
-            from aiohttp.resolver import ThreadedResolver
-            return aiohttp.TCPConnector(ssl=False, resolver=ThreadedResolver())
+        return aiohttp.TCPConnector(ssl=False, resolver=ThreadedResolver())
 
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""
