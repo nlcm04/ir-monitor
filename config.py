@@ -165,12 +165,12 @@ SITES = [
     {
         "key": "tasecoairs",
         "company": "Taseco Airs (AST)",
-        "url": "https://tasecoairs.vn/thong-tin-co-dong.html",
+        "url": "https://tasecoairs.vn/bao-cao-tai-chinh.html",
         # The .html extension and plain <a> link structure indicate SSR — no JS needed.
         # Playwright was timing out (90s) on GitHub Actions US IPs (server slow from US).
         # aiohttp bypasses the browser overhead and resolves in < 2s.
         "mode": "requests",
-        "item": "a[href*='/thong-tin-co-dong/']",
+        "item": "a[href*='/bao-cao-tai-chinh/']",
         "title": None,
         "link": None,
         "date": None,
