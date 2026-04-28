@@ -87,9 +87,9 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
     log.info("[%s] alerted %d/%d new items", site["key"], sent, len(new_items))
 
 
-async def run_cycle(site_filter: str | None = None) -> None:
+async def run_cycle(site_filter: str | None = None, force: bool = False) -> None:
     tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Ho_Chi_Minh"))
-    if site_filter is None and not _within_business_hours(tz):
+    if not force and site_filter is None and not _within_business_hours(tz):
         log.info("Outside business hours — skipping cycle")
         return
 
@@ -159,7 +159,10 @@ def main() -> None:
     database.init_db()
 
     if args.once or args.site:
-        asyncio.run(run_cycle(site_filter=args.site))
+        # force=True: the cron schedule controls timing on GHA, no need to
+        # re-check business hours here. Delayed GHA runs (often +2-3h) would
+        # otherwise be silently skipped if they land past the 19:00 ICT cutoff.
+        asyncio.run(run_cycle(site_filter=args.site, force=True))
     else:
         try:
             asyncio.run(_main_loop())
