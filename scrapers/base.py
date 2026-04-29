@@ -473,6 +473,10 @@ class PlaywrightScraper:
                     pub = _parse_date(m.group(1), site.get("date_formats", []))
                     title = title[:m.start()].rstrip("| :0123456789").strip()
 
+            # ACV financial reports: ordered-list number prefix "N. Title" → strip "N. "
+            if site.get("strip_number_prefix"):
+                title = re.sub(r"^\d+\.\s*", "", title).strip()
+
             # SASCO: second link for each article has the full URL as its text — skip it
             if site.get("filter_url_text_links") and title.startswith("http"):
                 continue

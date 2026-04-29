@@ -76,6 +76,20 @@ SITES = [
         "base_url": "https://phutai.com.vn",
     },
     {
+        "key": "ptb_fin",
+        "company": "Phú Tài (PTB)",
+        "url": "https://phutai.com.vn/category/bao-cao-tai-chinh/",
+        # SSR page: each report row is div.row.item-row containing a date paragraph
+        # and a title/link paragraph. Date is raw text node after an icon in p.text-stakeholders-2.
+        "mode": "requests",
+        "item": "div.row.item-row",
+        "title": "p.title-stakeholders a",
+        "link": "p.title-stakeholders a",
+        "date": "p.text-stakeholders-2",
+        "date_formats": ["%d/%m/%Y"],
+        "base_url": "https://phutai.com.vn",
+    },
+    {
         "key": "thienlong",
         "company": "Thiên Long Group (TLG)",
         "url": "https://thienlonggroup.com/quan-he-co-dong/tat-ca",
@@ -123,6 +137,21 @@ SITES = [
         "strip_date_prefix": True,
     },
     {
+        "key": "vietjet_qfin",
+        "company": "Vietjet Air (VJC)",
+        "url": "https://ir.vietjetair.com/Home/Menu/bao-cao-tai-chinh-quy",
+        # Same structure as thong-tin-khac: fully SSR, .linkPdf items with
+        # embedded date prefix "DD/MM/YYYY: Title" in the anchor text.
+        "mode": "requests",
+        "item": ".linkPdf",
+        "title": "a",
+        "link": "a",
+        "date": "a",
+        "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
+        "base_url": "https://ir.vietjetair.com",
+        "strip_date_prefix": True,
+    },
+    {
         "key": "dohaco",
         "company": "Dohaco Bến Tre (DHC)",
         # The dohacobentre.com.vn page embeds the FPTS IR widget as an <iframe>.
@@ -135,6 +164,23 @@ SITES = [
         "intercept_wait_until": "networkidle",  # FPTS page is self-contained, networkidle is reliable
         "intercept_sleep": 5,
         "base_url": "https://dohacobentre.com.vn",
+    },
+    {
+        "key": "dhc_fin",
+        "company": "Dohaco Bến Tre (DHC)",
+        "url": "https://dohacobentre.com.vn/bao-cao-tai-chinh",
+        # SSR page: financial report PDFs are in <li> tags inside #page-content.
+        # Using #page-content a[href*='/upload/files/'] as a self-contained item
+        # selector avoids matching nav/dropdown <li> elements elsewhere on the page.
+        # Covers both newer path (/upload/files/BCTC/) and older flat paths.
+        "mode": "requests",
+        "item": "#page-content a[href*='/upload/files/']",
+        "title": None,
+        "link": None,
+        "date": None,
+        "date_formats": [],
+        "base_url": "https://dohacobentre.com.vn",
+        "self_is_link": True,
     },
     {
         "key": "acv",
@@ -151,6 +197,23 @@ SITES = [
         "base_url": "https://acv.vn",
         "self_is_link": True,
         "strip_date_suffix": True,
+    },
+    {
+        "key": "acv_fin",
+        "company": "ACV (Tổng Công ty Cảng HKVN)",
+        "url": "https://acv.vn/vi/quan-he-co-dong/bao-cao-tai-chinh",
+        # JS-rendered (Next.js RSC). Financial report links appear in the DOM after
+        # hydration under the path /vi/co-dong/bao-cao-tai-chinh/. Playwright needed.
+        "wait_for": "a[href*='/vi/co-dong/bao-cao-tai-chinh/']",
+        "item": "a[href*='/vi/co-dong/bao-cao-tai-chinh/']",
+        "title": None,
+        "link": None,
+        "date": None,
+        "date_formats": [],
+        "base_url": "https://acv.vn",
+        "self_is_link": True,
+        "filter_url_text_links": True,  # skip any link whose text looks like a URL
+        "strip_number_prefix": True,    # strip leading "N. " from ordered-list titles
     },
     {
         "key": "vietnamairlines",
