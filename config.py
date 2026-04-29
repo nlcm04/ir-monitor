@@ -165,18 +165,20 @@ SITES = [
     {
         "key": "tasecoairs",
         "company": "Taseco Airs (AST)",
-        "url": "https://tasecoairs.vn/bao-cao-tai-chinh.html",
+        "url": "https://tasecoairs.vn/bao-cao-tai-chinh/bao-cao-tai-chinh-2026.html",
         # The .html extension and plain <a> link structure indicate SSR — no JS needed.
         # Playwright was timing out (90s) on GitHub Actions US IPs (server slow from US).
         # aiohttp bypasses the browser overhead and resolves in < 2s.
+        # Point directly at the current year's report page so we get individual
+        # quarterly/annual PDFs, not just the year-level index links.
+        # Update URL each year: bao-cao-tai-chinh-20XX.html
         "mode": "requests",
-        "item": "a[href*='/bao-cao-tai-chinh/']",
-        "title": None,
-        "link": None,
+        "item": "tr",
+        "title": "td:first-child",
+        "link": "a[href*='upload/userfiles']",  # only PDF upload links, skips footer junk
         "date": None,
-        "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"],
+        "date_formats": [],
         "base_url": "https://tasecoairs.vn",
-        "self_is_link": True,
     },
 ]
 
