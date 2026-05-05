@@ -71,13 +71,25 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
     if not new_items:
         return
 
-    # First-run seeding: record everything silently so we don't flood the chat
-    # with months of historical news the first time we see a site.
+    # First-run seeding: record historical items silently to avoid flooding the
+    # chat with months of backlog.  However, always notify the newest
+    # SEED_NOTIFY_NEWEST items (default 1) so a document that was published
+    # just before we added the site is not silently missed.
     first_run = not database.is_seeded(site["key"])
     if first_run and seed_mode:
-        database.record(new_items)
+        notify_newest = int(os.getenv("SEED_NOTIFY_NEWEST", "1"))
+        to_notify = new_items[:notify_newest]   # newest — send alert
+        to_seed   = new_items[notify_newest:]   # older backlog — silent
+
+        if to_seed:
+            database.record(to_seed)
         database.mark_seeded(site["key"])
-        log.info("[%s] seeded %d existing items (no alerts)", site["key"], len(new_items))
+        log.info("[%s] seeded %d historical items (no alerts)", site["key"], len(to_seed))
+
+        if to_notify:
+            sent = await notifier.send_many(to_notify)
+            database.record(to_notify)
+            log.info("[%s] notified %d newest item(s) on first run", site["key"], sent)
         return
 
     sent = await notifier.send_many(new_items)

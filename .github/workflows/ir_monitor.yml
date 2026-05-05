@@ -46,6 +46,7 @@ jobs:
           TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           HEADLESS=true
           SEED_ON_FIRST_RUN=true
+          SEED_NOTIFY_NEWEST=1
           TIMEZONE=Asia/Ho_Chi_Minh
           NAV_TIMEOUT_MS=90000
           SCRAPER_RETRIES=2
