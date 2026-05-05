@@ -92,10 +92,19 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
             log.info("[%s] notified %d newest item(s) on first run", site["key"], sent)
         return
 
-    sent = await notifier.send_many(new_items)
-    database.record(new_items)  # record regardless — we tried to alert
-    if not database.is_seeded(site["key"]):
-        database.mark_seeded(site["key"])
+    sent = 0
+    try:
+        sent = await notifier.send_many(new_items)
+    except Exception as e:  # noqa: BLE001
+        # Unexpected notification failure (not TelegramError — those are caught
+        # inside send_many).  Still record items below so they are not re-sent
+        # on the next cycle.
+        log.error("[%s] unexpected notification error: %s", site["key"], e)
+    finally:
+        database.record(new_items)  # always record — we attempted to alert
+        if not database.is_seeded(site["key"]):
+            database.mark_seeded(site["key"])
+
     log.info("[%s] alerted %d/%d new items", site["key"], sent, len(new_items))
 
 
