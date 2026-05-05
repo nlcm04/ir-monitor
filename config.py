@@ -38,7 +38,7 @@ SITES = [
     },
     {
         "key": "theky",
-        "company": "Thế Kỷ (CTCP Sách Thế Kỷ)",
+        "company": "Thế Kỷ (CTCP Sợi Thế Kỷ)",
         "url": "https://theky.vn/index.php/tin-tuc/",
         # WordPress / Elementor — fully server-side rendered, no JS needed.
         "mode": "requests",
