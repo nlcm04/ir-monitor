@@ -2,10 +2,11 @@ name: IR Monitor
 
 on:
   schedule:
-    # Runs at 00:00, 03:00, 06:00, 09:00, 12:00 UTC
-    # = 07:00, 10:00, 13:00, 16:00, 19:00 ICT (UTC+7)
-    - cron: "0 0,3,6,9,12 * * 1-5"   # weekdays only
-  workflow_dispatch:                   # allows manual trigger from GitHub UI
+    # Runs every 2 hours during business hours
+    # 00:00, 02:00, 04:00, 06:00, 08:00, 10:00, 12:00 UTC
+    # = 07:00, 09:00, 11:00, 13:00, 15:00, 17:00, 19:00 ICT (UTC+7)
+    - cron: "0 0,2,4,6,8,10,12 * * 1-5"   # weekdays only
+  workflow_dispatch:                        # allows manual trigger from GitHub UI
 
 jobs:
   scrape:
@@ -32,6 +33,12 @@ jobs:
         run: pip install -r requirements.txt
 
       # ── 3. Playwright ─────────────────────────────────────────────────────
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
       - name: Install Playwright + Chromium
         run: |
           python -m playwright install chromium
