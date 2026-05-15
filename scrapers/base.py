@@ -119,7 +119,7 @@ def _parse_date(raw: str, formats: list[str]) -> Optional[str]:
     s = re.sub(r"\s+", " ", s).strip()
     for fmt in formats:
         try:
-            return datetime.strptime(s[: len(datetime.now().strftime(fmt)) + 4], fmt).strftime("%Y-%m-%d")
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
     # Try a loose dd/mm/yyyy anywhere in the string
@@ -207,7 +207,7 @@ class PlaywrightScraper:
                 if site.get("mode") == "requests":
                     return await self._scrape_requests(site)
                 return await self._scrape_html(site)
-            except (ScraperError, Exception) as e:
+            except Exception as e:
                 last_exc = e
                 is_timeout = "timeout" in str(e).lower() or "TimeoutError" in type(e).__name__
                 is_scraper_err = isinstance(e, ScraperError)
@@ -271,7 +271,7 @@ class PlaywrightScraper:
         import aiohttp
         from aiohttp.resolver import ThreadedResolver
 
-        return aiohttp.TCPConnector(ssl=False, resolver=ThreadedResolver())
+        return aiohttp.TCPConnector(resolver=ThreadedResolver())
 
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""
@@ -448,11 +448,11 @@ class PlaywrightScraper:
                 continue
             url = _absolutize(base, href)
 
-            # If the link escapes to an unrelated domain, skip — usually a nav/ad link.
+            # Skip links that escape to an unrelated domain (nav/ad links).
+            # Subdomain check: "acv.vn" in "ir.acv.vn" → passes through.
             if urlparse(url).netloc and origin_host not in urlparse(url).netloc and \
                     urlparse(url).netloc not in origin_host:
-                # allow subdomains of base (e.g. ir.vietjetair.com base)
-                pass
+                continue
 
             # Date (skip for self_is_link sites — pub already set to None above)
             if not site.get("self_is_link"):

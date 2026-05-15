@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -72,7 +72,7 @@ def mark_seeded(site_key: str) -> None:
     with _conn() as con:
         con.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
-            (f"seeded:{site_key}", datetime.utcnow().isoformat()),
+            (f"seeded:{site_key}", datetime.now(timezone.utc).isoformat()),
         )
 
 
@@ -95,7 +95,7 @@ def filter_new(site_key: str, company: str, items: Iterable[dict]) -> list[dict]
 
 def record(items: Iterable[dict]) -> None:
     """Persist items that have been processed (alerted or seeded)."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     with _conn() as con:
         for it in items:
             con.execute(

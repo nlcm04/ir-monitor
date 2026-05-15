@@ -22,6 +22,8 @@ If a site changes its DOM, adjust the selectors here — no code edits needed.
 
 from __future__ import annotations
 
+from datetime import datetime as _dt
+
 SITES = [
     {
         "key": "pacvietnam",
@@ -228,7 +230,7 @@ SITES = [
     {
         "key": "tasecoairs",
         "company": "Taseco Airs (AST)",
-        "url": "https://tasecoairs.vn/bao-cao-tai-chinh/bao-cao-tai-chinh-2026.html",
+        "url": f"https://tasecoairs.vn/bao-cao-tai-chinh/bao-cao-tai-chinh-{_dt.now().year}.html",
         # The .html extension and plain <a> link structure indicate SSR — no JS needed.
         # Playwright was timing out (90s) on GitHub Actions US IPs (server slow from US).
         # aiohttp bypasses the browser overhead and resolves in < 2s.

@@ -163,7 +163,7 @@ async def _main_loop() -> None:
         if sig is None:
             continue
         try:
-            asyncio.get_event_loop().add_signal_handler(sig, _handle_stop)
+            asyncio.get_running_loop().add_signal_handler(sig, _handle_stop)
         except NotImplementedError:
             signal.signal(sig, lambda *_: _handle_stop())
 
