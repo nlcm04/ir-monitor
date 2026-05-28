@@ -145,13 +145,8 @@ class PlaywrightScraper:
     async def __aenter__(self) -> "PlaywrightScraper":
         self._pw = await async_playwright().start()
         headless = os.getenv("HEADLESS", "true").lower() != "false"
-        self._browser = await self._pw.chromium.launch(
+        self._browser = await self._pw.firefox.launch(
             headless=headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
         )
         return self
 
@@ -238,16 +233,20 @@ class PlaywrightScraper:
         # Merge any site-level extra headers (e.g. Referer)
         headers.update(site.get("extra_headers", {}))
 
+        url = site["url"]
+        if site.get("url_year_template"):
+            url = url.format(year=datetime.now().year)
+
         connector = self._build_aiohttp_connector()
         timeout = aiohttp.ClientTimeout(total=60)
 
-        log.info("[%s] requests-mode GET %s", site["key"], site["url"])
+        log.info("[%s] requests-mode GET %s", site["key"], url)
         async with aiohttp.ClientSession(
             headers=headers,
             connector=connector,
             timeout=timeout,
         ) as session:
-            async with session.get(site["url"]) as resp:
+            async with session.get(url) as resp:
                 resp.raise_for_status()
                 html = await resp.text(errors="replace")
 
@@ -276,13 +275,14 @@ class PlaywrightScraper:
     async def _scrape_html(self, site: dict) -> list[dict]:
         """Standard HTML scrape via CSS selectors."""
         ctx = await self._new_context()
-        page: Page = await ctx.new_page()
         timeout = int(os.getenv("NAV_TIMEOUT_MS", "90000"))
 
         # Sites that need full JS execution use networkidle; others use faster domcontentloaded
         load_strategy = site.get("wait_until", "domcontentloaded")
 
+        page: Optional[Page] = None
         try:
+            page = await ctx.new_page()
             log.info("[%s] GET %s (strategy=%s)", site["key"], site["url"], load_strategy)
             await page.goto(site["url"], wait_until=load_strategy, timeout=timeout)
 
@@ -298,7 +298,8 @@ class PlaywrightScraper:
             await asyncio.sleep(random.uniform(1.5, 3.0))
             html = await page.content()
         finally:
-            await page.close()
+            if page is not None:
+                await page.close()
             await ctx.close()
 
         items = self._parse(html, site)
@@ -320,26 +321,28 @@ class PlaywrightScraper:
         captured: list[dict] = []
 
         ctx = await self._new_context()
-        page: Page = await ctx.new_page()
         timeout = int(os.getenv("NAV_TIMEOUT_MS", "90000"))
 
-        async def on_response(response):
-            if pattern in response.url:
-                log.info("[%s] intercepted API: %s (HTTP %s)", site["key"], response.url[:120], response.status)
-                try:
-                    data = await response.json()
-                    captured.append(data)
-                    log.info("[%s] captured response (%d bytes)", site["key"], len(str(data)))
-                except Exception as exc:
-                    log.warning("[%s] could not parse intercepted response: %s", site["key"], exc)
-
-        page.on("response", on_response)
         # Default to networkidle for full-JS sites; domcontentloaded is faster for
         # sites whose AJAX widgets fire quickly (e.g. Dohaco FPTS widget) and where
         # networkidle would block on unrelated third-party CDN scripts.
         intercept_wait = site.get("intercept_wait_until", "networkidle")
         intercept_sleep = int(site.get("intercept_sleep", 5))
+        page: Optional[Page] = None
         try:
+            page = await ctx.new_page()
+
+            async def on_response(response):
+                if pattern in response.url:
+                    log.info("[%s] intercepted API: %s (HTTP %s)", site["key"], response.url[:120], response.status)
+                    try:
+                        data = await response.json()
+                        captured.append(data)
+                        log.info("[%s] captured response (%d bytes)", site["key"], len(str(data)))
+                    except Exception as exc:
+                        log.warning("[%s] could not parse intercepted response: %s", site["key"], exc)
+
+            page.on("response", on_response)
             log.info("[%s] API-intercept GET %s (wait=%s)", site["key"], site["url"], intercept_wait)
             await page.goto(site["url"], wait_until=intercept_wait, timeout=timeout)
             await asyncio.sleep(intercept_sleep)  # allow lazy API calls to fire
@@ -354,7 +357,8 @@ class PlaywrightScraper:
                 site["key"], len(captured),
             )
         finally:
-            await page.close()
+            if page is not None:
+                await page.close()
             await ctx.close()
 
         if not captured:

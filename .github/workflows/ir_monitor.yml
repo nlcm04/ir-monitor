@@ -10,10 +10,16 @@ on:
     - cron: "0 9 * * 0,6"
   workflow_dispatch:                        # allows manual trigger from GitHub UI
 
+concurrency:
+  group: ir-monitor
+  cancel-in-progress: false               # let the running job finish; queue the next
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write                       # allows git push with GITHUB_TOKEN
 
     steps:
       # ── 1. Checkout including the db file (if it exists) ──────────────────
@@ -22,7 +28,7 @@ jobs:
         with:
           # fetch full history so we can commit back
           fetch-depth: 1
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GH_PAT || github.token }}
 
       # ── 2. Python setup ───────────────────────────────────────────────────
       - name: Set up Python 3.12
@@ -39,12 +45,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          key: playwright-firefox-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Install Playwright + Chromium
+      - name: Install Playwright + Firefox
         run: |
-          python -m playwright install chromium
-          python -m playwright install-deps chromium
+          python -m playwright install firefox
+          python -m playwright install-deps firefox
 
       # ── 4. Write .env from GitHub Secrets ─────────────────────────────────
       - name: Create .env

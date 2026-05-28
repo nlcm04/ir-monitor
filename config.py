@@ -230,7 +230,8 @@ SITES = [
     {
         "key": "tasecoairs",
         "company": "Taseco Airs (AST)",
-        "url": f"https://tasecoairs.vn/bao-cao-tai-chinh/bao-cao-tai-chinh-{_dt.now().year}.html",
+        "url": "https://tasecoairs.vn/bao-cao-tai-chinh/bao-cao-tai-chinh-{year}.html",
+        "url_year_template": True,  # resolved to current year at scrape time
         # The .html extension and plain <a> link structure indicate SSR — no JS needed.
         # Playwright was timing out (90s) on GitHub Actions US IPs (server slow from US).
         # aiohttp bypasses the browser overhead and resolves in < 2s.
