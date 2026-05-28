@@ -1,0 +1,85 @@
+name: IR Monitor
+
+on:
+  schedule:
+    # Weekdays: every 2 hours, 09:00–21:00 ICT (Vietnam time) — 7 runs/day
+    # 02:00, 04:00, 06:00, 08:00, 10:00, 12:00, 14:00 UTC
+    # = 09:00, 11:00, 13:00, 15:00, 17:00, 19:00, 21:00 ICT
+    - cron: "0 2,4,6,8,10,12,14 * * 1-5"
+    # Weekends: once per day at 16:00 ICT (09:00 UTC)
+    - cron: "0 9 * * 0,6"
+  workflow_dispatch:                        # allows manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout including the db file (if it exists) ──────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v5
+        with:
+          # fetch full history so we can commit back
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 3. Playwright ─────────────────────────────────────────────────────
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Playwright + Chromium
+        run: |
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
+
+      # ── 4. Write .env from GitHub Secrets ─────────────────────────────────
+      - name: Create .env
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          HEADLESS=true
+          SEED_ON_FIRST_RUN=true
+          SEED_NOTIFY_NEWEST=1
+          TIMEZONE=Asia/Ho_Chi_Minh
+          NAV_TIMEOUT_MS=90000
+          SCRAPER_RETRIES=2
+          EOF
+
+      # ── 5. Ensure data/ folder exists (first run) ─────────────────────────
+      - name: Prepare data directory
+        run: mkdir -p data
+
+      # ── 6. Unit-test error handling before committing to a full scrape ──
+      - name: Run error-handling tests
+        run: python test_error_handling.py
+
+      # ── 7. Run one scrape cycle ───────────────────────────────────────────
+      - name: Run scraper
+        run: python main.py --once
+
+      # ── 8. Commit the updated SQLite DB back to the repo ──────────────────
+      #    This is how state persists between runs (no external DB needed).
+      - name: Commit updated database
+        run: |
+          git config user.name  "IR Monitor Bot"
+          git config user.email "ir-monitor-bot@users.noreply.github.com"
+          git add data/ir_monitor.db
+          # Only commit if the DB actually changed
+          git diff --cached --quiet || git commit -m "chore: update IR monitor DB [skip ci]"
+          git push
