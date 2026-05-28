@@ -40,7 +40,7 @@ jobs:
 
       # ── 3. Playwright ─────────────────────────────────────────────────────
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-firefox-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
