@@ -2,12 +2,10 @@ name: IR Monitor
 
 on:
   schedule:
-    # Weekdays: every 2 hours, 09:00–21:00 ICT (Vietnam time) — 7 runs/day
-    # 02:00, 04:00, 06:00, 08:00, 10:00, 12:00, 14:00 UTC
-    # = 09:00, 11:00, 13:00, 15:00, 17:00, 19:00, 21:00 ICT
-    - cron: "0 2,4,6,8,10,12,14 * * 1-5"
-    # Weekends: once per day at 16:00 ICT (09:00 UTC)
-    - cron: "0 9 * * 0,6"
+    # Every 15 minutes, 24/7 — public repo = unlimited minutes.
+    # Worst-case alert lag = ~15 min (+ GitHub scheduler jitter ~5-10 min).
+    # Each run takes ~11 min, so a ~4 min gap exists between back-to-back runs.
+    - cron: "*/15 * * * *"
   workflow_dispatch:                        # allows manual trigger from GitHub UI
 
 concurrency:
@@ -63,8 +61,8 @@ jobs:
           SEED_ON_FIRST_RUN=true
           SEED_NOTIFY_NEWEST=1
           TIMEZONE=Asia/Ho_Chi_Minh
-          NAV_TIMEOUT_MS=90000
-          SCRAPER_RETRIES=2
+          NAV_TIMEOUT_MS=60000
+          SCRAPER_RETRIES=1
           EOF
 
       # ── 5. Ensure data/ folder exists (first run) ─────────────────────────
