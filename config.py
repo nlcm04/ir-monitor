@@ -203,10 +203,11 @@ SITES = [
     {
         "key": "acv_fin",
         "company": "ACV (Tổng Công ty Cảng HKVN)",
-        "url": "https://acv.vn/vi/quan-he-co-dong/bao-cao-tai-chinh",
-        # JS-rendered (Next.js RSC). Financial report links appear in the DOM after
-        # hydration under the path /vi/co-dong/bao-cao-tai-chinh/. Playwright needed.
-        "wait_for": "a[href*='/vi/co-dong/bao-cao-tai-chinh/']",
+        "url": "https://acv.vn/vi/co-dong/bao-cao-tai-chinh",
+        # The /vi/quan-he-co-dong/bao-cao-tai-chinh URL was a tab-based SPA that
+        # only showed "Đang tải..." with no links. The real report listing is at
+        # /vi/co-dong/bao-cao-tai-chinh — fully SSR like acv notices, so aiohttp works.
+        "mode": "requests",
         "item": "a[href*='/vi/co-dong/bao-cao-tai-chinh/']",
         "title": None,
         "link": None,
