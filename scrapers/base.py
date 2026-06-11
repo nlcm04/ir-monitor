@@ -64,6 +64,10 @@ _TRANSIENT_MSG_MARKERS = (
     "tunnel_connection_failed",
     "temporary failure in name resolution",
     "err_network", "err_internet_disconnected",
+    "sec_error_expired_certificate",       # Firefox: server cert expired
+    "sec_error_unknown_issuer",            # Firefox: untrusted CA
+    "err_cert_",                           # Chromium: certificate errors
+    "ssl:",                                # generic SSL/TLS failures
 )
 
 
@@ -183,6 +187,7 @@ class PlaywrightScraper:
             locale="vi-VN",
             viewport={"width": 1366, "height": 900},
             extra_http_headers=_CONTEXT_SAFE_HEADERS,
+            ignore_https_errors=True,  # allow expired/self-signed certs (read-only monitor)
         )
         # Strip the webdriver flag that some anti-bot checks look for.
         await ctx.add_init_script(
