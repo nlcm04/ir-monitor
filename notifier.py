@@ -35,16 +35,14 @@ def _format_message(item: dict) -> str:
     url = item["url"]  # href attribute, not escaped
 
     flags = _flags_for(item["title"])
-    flag_line = ""
+    meta = [company]
     if flags:
-        flag_line = f"🚨 <b>{' · '.join(flags)}</b>\n"
+        meta.append(" / ".join(flags))
+    meta.append(date)
 
     return (
-        f"{flag_line}"
-        f"🏢 <b>{company}</b>\n"
-        f"📅 {date}\n"
-        f"📰 {title}\n"
-        f'🔗 <a href="{html.escape(url, quote=True)}">Open article</a>'
+        f"<i>{' · '.join(meta)}</i>\n"
+        f'<a href="{html.escape(url, quote=True)}"><b>{title}</b></a>'
     )
 
 

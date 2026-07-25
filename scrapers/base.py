@@ -394,10 +394,12 @@ class PlaywrightScraper:
                         items.append({"title": title, "url": url, "published": pub})
 
         elif parser == "vna_jcr":
-            # VNA AEM API: {"YYYY": {"items": [{"path":..., "title":...}]}}
-            # Multiple responses (one per year). Merge all items.
+            # VNA AEM API: {"YYYY": {"items": [{"path":..., "title":..., "asset":...,
+            # "publishDate":...}]}}. Multiple responses (one per year). Merge all items.
+            # "asset" is the actual downloadable PDF path — the slug derived from "path"
+            # is a content-fragment id, not a real page, and 404s if used as a URL.
             seen_paths: set = set()
-            base_article_url = site.get("article_base_url", "")
+            origin = site.get("base_url", "")
             for resp in captured:
                 for year_data in resp.values():
                     if not isinstance(year_data, dict):
@@ -408,10 +410,12 @@ class PlaywrightScraper:
                             continue
                         seen_paths.add(path)
                         title = (item.get("title") or "").strip()
-                        # Derive public URL from the last path segment
-                        slug = path.rstrip("/").split("/")[-1]
-                        url = f"{base_article_url}/{slug}" if base_article_url else path
-                        pub = _parse_date(item.get("publishedDate", ""), ["%Y-%m-%dT%H:%M:%S"])
+                        asset = item.get("asset", "")
+                        url = f"{origin}{asset}" if asset else ""
+                        pub = _parse_date(
+                            item.get("publishDate", ""),
+                            ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S"],
+                        )
                         if title and url:
                             items.append({"title": title, "url": url, "published": pub})
 
@@ -440,9 +444,15 @@ class PlaywrightScraper:
         for node in nodes:
             # When the item node itself is the <a> tag (self_is_link sites)
             if site.get("self_is_link") and node.name == "a":
-                title = node.get_text(" ", strip=True).strip()
+                if site.get("title"):
+                    # Nested selector — use it instead of the node's full text so
+                    # sibling chrome (icons, "Download PDF" labels, timestamps
+                    # rendered alongside the headline) doesn't leak into the title.
+                    title_el = node.select_one(site["title"])
+                    title = (title_el.get_text(" ", strip=True) if title_el else "").strip()
+                else:
+                    title = node.get_text(" ", strip=True).strip()
                 href = (node.get("href") or "").strip()
-                pub = None
             else:
                 # Title
                 title_el = node.select_one(site["title"]) if site.get("title") else None
@@ -463,13 +473,13 @@ class PlaywrightScraper:
                     urlparse(url).netloc not in origin_host:
                 continue
 
-            # Date (skip for self_is_link sites — pub already set to None above)
-            if not site.get("self_is_link"):
-                pub = None
-                if site.get("date"):
-                    date_el = node.select_one(site["date"])
-                    if date_el:
-                        pub = _parse_date(date_el.get_text(" ", strip=True), site.get("date_formats", []))
+            # Date — most self_is_link sites don't expose one separately (None,
+            # same as before), but this lets a site opt in via a "date" selector.
+            pub = None
+            if site.get("date"):
+                date_el = node.select_one(site["date"])
+                if date_el:
+                    pub = _parse_date(date_el.get_text(" ", strip=True), site.get("date_formats", []))
 
             # Vietjet: date prefix "17/04/2026: headline" → strip to get clean title
             if site.get("strip_date_prefix"):

@@ -87,8 +87,13 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
         log.info("[%s] seeded %d historical items (no alerts)", site["key"], len(to_seed))
 
         if to_notify:
-            sent = await notifier.send_many(to_notify)
-            database.record(to_notify)
+            sent = 0
+            try:
+                sent = await notifier.send_many(to_notify)
+            except Exception as e:  # noqa: BLE001 — mirror the main notify path's guard
+                log.error("[%s] unexpected notification error during seeding: %s", site["key"], e)
+            finally:
+                database.record(to_notify)  # always record — we attempted to alert
             log.info("[%s] notified %d newest item(s) on first run", site["key"], sent)
         return
 

@@ -95,8 +95,11 @@ SITES = [
         "key": "thienlong",
         "company": "Thiên Long Group (TLG)",
         "url": "https://thienlonggroup.com/quan-he-co-dong/tat-ca",
-        "wait_for": "div.inner",
-        "item": "div.inner",
+        # Plain "div.inner" also matches the site's nav-menu wrapper (same class,
+        # unrelated content, present before the news list loads) — scoping to the
+        # news list container avoids both a false-early wait_for and phantom items.
+        "wait_for": "div.content__scroll div.inner",
+        "item": "div.content__scroll div.inner",
         "title": "div.title a",
         "link": "div.title a",
         "date": None,
@@ -209,10 +212,13 @@ SITES = [
         # /vi/co-dong/bao-cao-tai-chinh — fully SSR like acv notices, so aiohttp works.
         "mode": "requests",
         "item": "a[href*='/vi/co-dong/bao-cao-tai-chinh/']",
-        "title": None,
+        # The <a> card also contains a "📥 Tải PDF" label and a "HH:MM | DD/MM/YYYY"
+        # timestamp row alongside the headline; without a title selector the raw
+        # get_text() of the whole card pulls all of that in as one string.
+        "title": "h3",
         "link": None,
-        "date": None,
-        "date_formats": [],
+        "date": "time ~ time",  # 2nd <time> tag holds the date; 1st is just HH:MM
+        "date_formats": ["%d/%m/%Y"],
         "base_url": "https://acv.vn",
         "self_is_link": True,
         "filter_url_text_links": True,  # skip any link whose text looks like a URL
@@ -225,7 +231,6 @@ SITES = [
         # VNA uses Adobe AEM — news items are loaded via jcr:content JSON API calls
         "intercept_url_contains": "investor-news/jcr:content",
         "intercept_parser": "vna_jcr",
-        "article_base_url": "https://www.vietnamairlines.com/vn/vi/vietnam-airlines/investor-relations/investor-news",
         "base_url": "https://www.vietnamairlines.com",
     },
     {
@@ -249,26 +254,26 @@ SITES = [
     },
 ]
 
-# Keywords that trigger the 🚨 flag on alerts. Matched case-insensitively
+# Keywords that trigger a category tag on alerts. Matched case-insensitively
 # and accent-insensitively against the headline.
 FLAG_KEYWORDS = [
-    ("cổ tức", "💰 DIVIDEND"),
-    ("chia cổ tức", "💰 DIVIDEND"),
-    ("lợi nhuận", "📈 EARNINGS"),
-    ("kết quả kinh doanh", "📈 EARNINGS"),
-    ("báo cáo tài chính", "📊 FINANCIALS"),
-    ("báo cáo thường niên", "📊 ANNUAL REPORT"),
-    ("đại hội", "🏛️ AGM/EGM"),
-    ("đhđcđ", "🏛️ AGM/EGM"),
-    ("từ nhiệm", "⚠️ RESIGNATION"),
-    ("miễn nhiệm", "⚠️ RESIGNATION"),
-    ("bổ nhiệm", "👤 APPOINTMENT"),
-    ("phát hành", "🧾 ISSUANCE"),
-    ("chào bán", "🧾 ISSUANCE"),
-    ("giao dịch cổ phiếu", "🔁 INSIDER TRADE"),
-    ("cổ đông lớn", "🐋 MAJOR HOLDER"),
-    ("m&a", "🤝 M&A"),
-    ("sáp nhập", "🤝 M&A"),
+    ("cổ tức", "Dividend"),
+    ("chia cổ tức", "Dividend"),
+    ("lợi nhuận", "Earnings"),
+    ("kết quả kinh doanh", "Earnings"),
+    ("báo cáo tài chính", "Financials"),
+    ("báo cáo thường niên", "Annual Report"),
+    ("đại hội", "AGM/EGM"),
+    ("đhđcđ", "AGM/EGM"),
+    ("từ nhiệm", "Resignation"),
+    ("miễn nhiệm", "Resignation"),
+    ("bổ nhiệm", "Appointment"),
+    ("phát hành", "Issuance"),
+    ("chào bán", "Issuance"),
+    ("giao dịch cổ phiếu", "Insider Trade"),
+    ("cổ đông lớn", "Major Holder"),
+    ("m&a", "M&A"),
+    ("sáp nhập", "M&A"),
 ]
 
 # ---------------------------------------------------------------------------
