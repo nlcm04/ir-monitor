@@ -2,10 +2,10 @@
 test_financial_report.py — Live end-to-end test of the financial-report feature.
 
 Scrapes a real financial-statement site, picks its latest filing, generates
-the year-over-year income-statement DOCX (via Claude vision), and sends both
+the year-over-year income-statement DOCX (via Tesseract OCR), and sends both
 the normal alert message and the DOCX to Telegram for real — ignores the DB
-so you always get a message. Requires TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-and ANTHROPIC_API_KEY to be set in .env.
+so you always get a message. Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+in .env, and Tesseract (+ Vietnamese language data) installed locally.
 
 Usage:
     python test_financial_report.py                # tries each financial-report site until one works
@@ -66,11 +66,11 @@ async def main() -> None:
             ok = await notifier.send_article(item)
             print(f"  alert sent: {ok}")
 
-            print("  generating income-statement report (this calls the Claude API)...")
+            print("  generating income-statement report (downloads the PDF + runs Tesseract OCR)...")
             path = await financial_report.maybe_generate_report(item)
             if path is None:
-                print("  no report generated (no ANTHROPIC_API_KEY, extraction found nothing, or download failed — see logs above)")
-                return
+                print("  no report generated (Tesseract not installed, extraction found nothing, or download failed — see WARNING/INFO logs above for the actual cause)")
+                continue  # try the next candidate site instead of giving up entirely
             print(f"  report built: {path}")
 
             sent = await notifier.send_document(path, caption=item["title"][:1024])

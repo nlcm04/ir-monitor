@@ -85,7 +85,10 @@ async def _download_pdf(url: str) -> bytes:
 
     connector = PlaywrightScraper._build_aiohttp_connector()
     headers = {**FIREFOX_HEADERS, "User-Agent": random.choice(USER_AGENTS)}
-    timeout = aiohttp.ClientTimeout(total=60)
+    # Scanned financial-statement PDFs run 10-50+ MB; a CI runner's bandwidth
+    # to a small VN host can be much slower than local, so give this real room
+    # rather than the ~60s that's plenty for ordinary article pages.
+    timeout = aiohttp.ClientTimeout(total=180)
     async with aiohttp.ClientSession(headers=headers, connector=connector, timeout=timeout) as session:
         async with session.get(url) as resp:
             resp.raise_for_status()
@@ -175,7 +178,7 @@ def _extract_income_statement(pdf_bytes: bytes) -> list[dict]:
                 try:
                     row_texts = _cluster_rows(im)
                 except Exception as e:
-                    log.warning("OCR failed on a page: %s", e)
+                    log.warning("OCR failed on a page: %s: %s", type(e).__name__, e)
                     continue
 
                 for line in row_texts:
@@ -202,7 +205,7 @@ def _extract_income_statement(pdf_bytes: bytes) -> list[dict]:
                 if len(rows_found) >= _MIN_ROWS_TO_STOP:
                     break
     except Exception as e:
-        log.warning("Failed to open/OCR PDF for income statement: %s", e)
+        log.warning("Failed to open/OCR PDF for income statement: %s: %s", type(e).__name__, e)
         return []
 
     return [
@@ -306,13 +309,15 @@ async def maybe_generate_report(item: dict) -> Optional[Path]:
     try:
         pdf_bytes = await _download_pdf(item["url"])
     except Exception as e:
-        log.warning("[%s] could not download PDF for report: %s", item.get("site_key"), e)
+        # Include the type name — some exceptions (e.g. a bare asyncio.TimeoutError)
+        # stringify to "", which would otherwise hide the failure entirely.
+        log.warning("[%s] could not download PDF for report: %s: %s", item.get("site_key"), type(e).__name__, e)
         return None
 
     try:
         rows = _extract_income_statement(pdf_bytes)
     except Exception as e:
-        log.warning("[%s] income-statement extraction failed: %s", item.get("site_key"), e)
+        log.warning("[%s] income-statement extraction failed: %s: %s", item.get("site_key"), type(e).__name__, e)
         return None
 
     if not rows:

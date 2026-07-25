@@ -51,14 +51,14 @@ async def _notify_with_reports(items: list[dict], notifier: Notifier, site_key: 
         try:
             path = await financial_report.maybe_generate_report(it)
         except Exception as e:  # noqa: BLE001 — best-effort, never blocks alerting
-            log.warning("[%s] financial report generation failed: %s", site_key, e)
+            log.warning("[%s] financial report generation failed: %s: %s", site_key, type(e).__name__, e)
             continue
         if path is None:
             continue
         try:
             await notifier.send_document(path, caption=it["title"][:1024])
         except Exception as e:  # noqa: BLE001
-            log.warning("[%s] failed to send financial report doc: %s", site_key, e)
+            log.warning("[%s] failed to send financial report doc: %s: %s", site_key, type(e).__name__, e)
     return sent
 
 
