@@ -213,8 +213,28 @@ def _extract_income_statement(pdf_bytes: bytes) -> list[dict]:
     ]
 
 
+# Vietnamese label + narrative-sentence subject to use for each highlighted
+# metric — mirrors a sell-side earnings note's bullet style: bolded topic,
+# then a plain-language sentence stating the value and its YoY move.
+_HIGHLIGHT_VN = {
+    "Net revenue": "Doanh thu thuần",
+    "Gross profit": "Lợi nhuận gộp",
+    "Operating profit": "Lợi nhuận thuần từ hoạt động kinh doanh",
+    "Net profit after tax": "Lợi nhuận sau thuế",
+}
+
+
 def _fmt_number(v: Optional[float]) -> str:
     return "—" if v is None else f"{v:,.0f}"
+
+
+def _fmt_billions_vn(v: Optional[float]) -> str:
+    """Format a raw-VND figure in tỷ đồng (billions) with a Vietnamese
+    decimal comma, matching how VN equity research quotes figures."""
+    if v is None:
+        return "—"
+    ty = v / 1_000_000_000
+    return f"{ty:,.1f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def _pct_change(current: Optional[float], prior: Optional[float]) -> Optional[float]:
@@ -228,9 +248,33 @@ def _fmt_change(current: Optional[float], prior: Optional[float]) -> str:
     return "—" if pct is None else f"{'+' if pct >= 0 else ''}{pct:.1f}%"
 
 
+def _trend_word(pct: Optional[float]) -> str:
+    if pct is None:
+        return "thay đổi"
+    return "tăng" if pct >= 0 else "giảm"
+
+
 def _safe_slug(text: str, maxlen: int = 60) -> str:
     slug = re.sub(r"[^\w\-]+", "_", unidecode(text)).strip("_")
     return slug[:maxlen] or "report"
+
+
+def _build_headline(company: str, by_label: dict) -> str:
+    """A factual, data-driven headline in the same spirit as a sell-side
+    note's title — states the two biggest-picture moves, nothing invented."""
+    parts = []
+    for label in ("Net revenue", "Net profit after tax"):
+        r = by_label.get(label)
+        if not r or r["current"] is None:
+            continue
+        pct = _pct_change(r["current"], r["prior"])
+        if pct is None:
+            continue
+        vn = _HIGHLIGHT_VN[label]
+        parts.append(f"{vn} {_trend_word(pct)} {abs(pct):.1f}%")
+    if not parts:
+        return f"{company} — Báo cáo kết quả kinh doanh"
+    return f"{company} — {', '.join(parts)} so với cùng kỳ"
 
 
 def _build_docx(item: dict, rows: list[dict]) -> Path:
@@ -242,40 +286,42 @@ def _build_docx(item: dict, rows: list[dict]) -> Path:
 
     doc = Document()
 
-    # Header — company, report title, date (mirrors the header block of a
-    # standard sell-side earnings note: entity, title, publish date).
-    doc.add_heading(f"{item['company']} — Income Statement (YoY)", level=1)
+    # Header — headline, category/date tag line, source title. Mirrors a
+    # sell-side note's header block: entity + headline, "Doanh Nghiệp • date".
+    doc.add_heading(_build_headline(item["company"], by_label), level=1)
+    tag_line = doc.add_paragraph()
+    tag_line.add_run(f"Doanh nghiệp  •  {item.get('published') or '—'}").italic = True
     sub = doc.add_paragraph()
     sub.add_run(item["title"]).italic = True
-    meta = doc.add_paragraph()
-    meta_run = meta.add_run(
-        f"Published: {item.get('published') or '—'}   |   Source: {item['url']}\n"
-        "Figures OCR-extracted from the source PDF — verify against the original before relying on them."
-    )
-    meta_run.font.size = Pt(9)
 
-    # Highlights — short bullet summary of the key lines, each with its YoY
-    # change, in the spirit of a sell-side note's headline bullets.
-    doc.add_heading("Highlights", level=2)
+    # Highlights — narrative sentences for the key lines, each stating the
+    # value (in tỷ đồng, as VN equity research conventionally quotes it) and
+    # its YoY move, in the same bolded-topic-then-sentence bullet style.
+    doc.add_heading("Điểm nhấn", level=2)
     any_highlight = False
     for label in _HIGHLIGHT_LABELS:
         r = by_label.get(label)
         if not r or r["current"] is None:
             continue
         any_highlight = True
-        change = _fmt_change(r["current"], r["prior"])
+        pct = _pct_change(r["current"], r["prior"])
+        vn = _HIGHLIGHT_VN[label]
+        change_clause = (
+            f"({_trend_word(pct)} {abs(pct):.1f}% so với cùng kỳ năm trước)"
+            if pct is not None else "(không có số liệu cùng kỳ để so sánh)"
+        )
         p = doc.add_paragraph(style="List Bullet")
-        p.add_run(f"{label}: ").bold = True
-        p.add_run(f"{_fmt_number(r['current'])} VND ({change} YoY)")
+        p.add_run(f"{vn}: ").bold = True
+        p.add_run(f"đạt {_fmt_billions_vn(r['current'])} tỷ đồng {change_clause}.")
     if not any_highlight:
-        doc.add_paragraph("No key metrics were confidently extracted — see the table below for what was found.")
+        doc.add_paragraph("Không trích xuất được chỉ tiêu chính nào — xem bảng chi tiết bên dưới.")
 
     # Full line-item table — this period vs same period last year, the
     # comparison actually printed in a standalone quarterly/annual filing.
-    doc.add_heading("Income Statement — Year over Year", level=2)
+    doc.add_heading(f"Hình 1: Kết quả kinh doanh — {item['company']}", level=2)
     table = doc.add_table(rows=1, cols=4)
     table.style = "Light Grid Accent 1"
-    headers = ["Line Item", "This Period (VND)", "Same Period Last Year (VND)", "YoY Change"]
+    headers = ["Chỉ tiêu", "Kỳ này (VNĐ)", "Cùng kỳ năm trước (VNĐ)", "Thay đổi YoY"]
     for cell, text in zip(table.rows[0].cells, headers):
         cell.text = text
         for p in cell.paragraphs:
@@ -284,7 +330,7 @@ def _build_docx(item: dict, rows: list[dict]) -> Path:
 
     for row in rows:
         cells = table.add_row().cells
-        cells[0].text = row["label"]
+        cells[0].text = row["label_vn"]
         cells[1].text = _fmt_number(row["current"])
         cells[2].text = _fmt_number(row["prior"])
         cells[3].text = _fmt_change(row["current"], row["prior"])
@@ -293,6 +339,17 @@ def _build_docx(item: dict, rows: list[dict]) -> Path:
                 for p in cell.paragraphs:
                     for r in p.runs:
                         r.bold = True
+
+    # Footer — source/note line, matching the "Nguồn: ...; Lưu ý: ..." footnote
+    # convention of a sell-side note.
+    footer = doc.add_paragraph()
+    footer_run = footer.add_run(
+        f"Nguồn: {item['company']}, {item['url']}. "
+        "Lưu ý: Số liệu được trích xuất bằng OCR từ file PDF gốc — vui lòng đối chiếu "
+        "với báo cáo tài chính gốc trước khi sử dụng."
+    )
+    footer_run.font.size = Pt(9)
+    footer_run.italic = True
 
     path = _OUTPUT_DIR / f"{item.get('site_key', 'report')}_{_safe_slug(item['title'])}.docx"
     doc.save(path)
