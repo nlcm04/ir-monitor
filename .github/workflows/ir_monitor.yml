@@ -86,11 +86,31 @@ jobs:
 
       # ── 8. Commit the updated SQLite DB back to the repo ──────────────────
       #    This is how state persists between runs (no external DB needed).
+      #    Rebase-and-retry on push: a run takes several minutes end-to-end,
+      #    so any other commit landing on main in that window (a manual push,
+      #    an overlapping run) makes a plain `git push` fail non-fast-forward.
+      #    Without the retry, that commit is silently dropped and the newly-
+      #    seen article fingerprints never persist, risking duplicate alerts
+      #    next cycle.
       - name: Commit updated database
         run: |
           git config user.name  "IR Monitor Bot"
           git config user.email "ir-monitor-bot@users.noreply.github.com"
           git add data/ir_monitor.db
-          # Only commit if the DB actually changed
-          git diff --cached --quiet || git commit -m "chore: update IR monitor DB [skip ci]"
-          git push
+          if git diff --cached --quiet; then
+            echo "No DB changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update IR monitor DB [skip ci]"
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt) — rebasing onto latest main and retrying"
+            git fetch origin main
+            git rebase origin/main
+            sleep $(( (RANDOM % 10) + 1 ))
+          done
+          echo "Push failed after 5 attempts"
+          exit 1
