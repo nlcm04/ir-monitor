@@ -53,6 +53,10 @@ jobs:
           python -m playwright install firefox
           python -m playwright install-deps firefox
 
+      # ── 3b. Tesseract OCR (financial-statement PDFs are scanned images) ────
+      - name: Install Tesseract OCR + Vietnamese language data
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-vie
+
       # ── 4. Write .env from GitHub Secrets ─────────────────────────────────
       - name: Create .env
         run: |
@@ -60,7 +64,6 @@ jobs:
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
-          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           HEADLESS=true
           SEED_ON_FIRST_RUN=true
           SEED_NOTIFY_NEWEST=1

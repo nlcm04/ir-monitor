@@ -42,12 +42,16 @@ jobs:
           python -m playwright install firefox
           python -m playwright install-deps firefox
 
+      # Financial-statement PDFs are almost always scanned images with no
+      # text layer — the income statement is read via Tesseract OCR.
+      - name: Install Tesseract OCR + Vietnamese language data
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-vie
+
       - name: Create .env
         run: |
           cat > .env <<EOF
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
-          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           EOF
 
       - name: Run financial report test

@@ -7,18 +7,19 @@ with two value columns side by side — "Kỳ này" (this period) and "Kỳ trư
 no historical lookup is needed. The catch: in practice these PDFs are almost
 always scanned images with no embedded text layer (confirmed against real
 filings from several portfolio companies), so plain text extraction doesn't
-work. Instead we render the first few pages to images and have Claude read the
-table directly — far more robust than OCR on dense Vietnamese number tables.
+work. Instead we OCR the pages with Tesseract (free, local, no external API)
+and reconstruct table rows from word bounding boxes, since raw OCR reading
+order scrambles multi-column tables.
 
-Best-effort throughout: any failure (no API key, no PDF, nothing found) just
-skips the report — it never blocks the normal Telegram alert.
+Best-effort throughout: any failure (Tesseract missing, nothing found) just
+skips the report — it never blocks the normal Telegram alert. OCR on dense
+Vietnamese number tables isn't perfect, so the generated report carries an
+explicit "verify against source" disclaimer.
 """
 
 from __future__ import annotations
 
-import base64
 import io
-import json
 import os
 import re
 from pathlib import Path
@@ -35,46 +36,34 @@ log = get_logger(__name__)
 
 _OUTPUT_DIR = Path(__file__).parent / "reports"
 _MAX_PAGES = 15
-_MODEL = "claude-opus-5"
+_MIN_ROWS_TO_STOP = 5  # once this many line items are found, assume the page was the income statement
 
-_INCOME_STATEMENT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "found": {
-            "type": "boolean",
-            "description": "true iff an income statement / statement of profit or loss table appears in these pages",
-        },
-        "line_items": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "label_vn": {"type": "string", "description": "the line item's original Vietnamese label"},
-                    "label_en": {"type": "string", "description": "short English translation"},
-                    "current_period": {"anyOf": [{"type": "number"}, {"type": "null"}]},
-                    "prior_period": {"anyOf": [{"type": "number"}, {"type": "null"}]},
-                },
-                "required": ["label_vn", "label_en", "current_period", "prior_period"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["found", "line_items"],
-    "additionalProperties": False,
-}
+# Short, robust key phrases — matched by fuzzy word-presence (see _line_matches)
+# rather than exact substring, since OCR commonly drops a word or two. Ordered
+# to match the standard Circular 200 row sequence top-to-bottom, which lets
+# earlier (already-claimed) labels win over later ones on ambiguous rows.
+_LINE_ITEMS = [
+    ("Doanh thu bán hàng", "Gross revenue"),
+    ("giảm trừ doanh thu", "Revenue deductions"),
+    ("Doanh thu thuần", "Net revenue"),
+    ("Giá vốn hàng bán", "Cost of goods sold"),
+    ("Lợi nhuận gộp", "Gross profit"),
+    ("Doanh thu hoạt động tài chính", "Financial income"),
+    ("Chi phí tài chính", "Financial expenses"),
+    ("Chi phí bán hàng", "Selling expenses"),
+    ("Chi phí quản lý doanh nghiệp", "G&A expenses"),
+    ("Lợi nhuận thuần từ hoạt động kinh doanh", "Operating profit"),
+    ("Thu nhập khác", "Other income"),
+    ("Chi phí khác", "Other expenses"),
+    ("Lợi nhuận khác", "Other profit"),
+    ("Tổng lợi nhuận kế toán trước thuế", "Profit before tax"),
+    ("Lợi nhuận sau thuế thu nhập doanh nghiệp", "Net profit after tax"),
+    ("Lãi cơ bản trên cổ phiếu", "Basic EPS"),
+]
 
-_EXTRACTION_PROMPT = (
-    "These are scanned pages from a Vietnamese company's audited financial "
-    "statement (báo cáo tài chính). Find the Income Statement / Statement of "
-    "Profit or Loss (Báo cáo kết quả hoạt động kinh doanh) if it appears in "
-    "these pages — a table with two value columns: 'Kỳ này' or similar "
-    "(this period) and 'Kỳ trước' (same period last year). Extract every line "
-    "item with both values as plain numbers in VND (no thousands separators; "
-    "a value in parentheses is negative). If the statement isn't in these "
-    "pages, set found=false and return an empty line_items array."
-)
+_HIGHLIGHT_LABELS = ["Net revenue", "Gross profit", "Operating profit", "Net profit after tax"]
 
-_HIGHLIGHT_LABELS = {"Net revenue", "Gross profit", "Operating profit", "Profit before tax", "Net profit after tax"}
+_NUM_RE = re.compile(r"\(?-?[\d.,]{4,}\)?")
 
 
 def is_financial_statement(item: dict) -> bool:
@@ -103,59 +92,121 @@ async def _download_pdf(url: str) -> bytes:
             return await resp.read()
 
 
-def _render_pages_to_base64(pdf_bytes: bytes, max_pages: int = _MAX_PAGES) -> list[str]:
-    images: list[str] = []
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages[:max_pages]:
-            im = page.to_image(resolution=150).original
-            buf = io.BytesIO()
-            im.save(buf, format="PNG")
-            images.append(base64.standard_b64encode(buf.getvalue()).decode("utf-8"))
-    return images
+def _cluster_rows(im, conf_threshold: int = 30, y_tol_frac: float = 0.6) -> list[str]:
+    """Reconstruct table rows from OCR word boxes.
+
+    Tesseract's own line grouping frequently splits one visual table row into
+    several "lines" when a note-reference column shifts the baseline, which
+    scrambles label-to-number association. Clustering by vertical center
+    across the whole page (rather than trusting Tesseract's line_num) merges
+    those fragments back into complete rows.
+    """
+    import pytesseract
+    from pytesseract import Output
+
+    # Optional override for local dev (e.g. Windows, where Tesseract isn't on
+    # PATH). On the GitHub Actions runner, apt-installed tesseract-ocr is on
+    # PATH already and neither env var needs to be set.
+    if os.getenv("TESSERACT_CMD"):
+        pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
+
+    data = pytesseract.image_to_data(im, lang="vie", output_type=Output.DICT)
+    words = []
+    for i in range(len(data["text"])):
+        txt = data["text"][i].strip()
+        if not txt:
+            continue
+        try:
+            conf = int(data["conf"][i])
+        except (ValueError, TypeError):
+            conf = -1
+        if conf != -1 and conf < conf_threshold:
+            continue
+        top, h, left = data["top"][i], data["height"][i], data["left"][i]
+        words.append({"top": top, "h": h, "left": left, "text": txt, "center": top + h / 2})
+
+    words.sort(key=lambda w: w["center"])
+    rows: list[list[dict]] = []
+    for w in words:
+        for row in rows:
+            avg_h = sum(x["h"] for x in row) / len(row)
+            if abs(w["center"] - row[0]["center"]) <= avg_h * y_tol_frac:
+                row.append(w)
+                break
+        else:
+            rows.append([w])
+
+    rows.sort(key=lambda row: sum(x["center"] for x in row) / len(row))
+    return [" ".join(w["text"] for w in sorted(row, key=lambda w: w["left"])) for row in rows]
+
+
+def _line_matches(label_vn: str, hay: str) -> bool:
+    """Fuzzy match: most of the label's words must appear in the line,
+    tolerating a word OCR dropped or garbled."""
+    words = unidecode(label_vn).lower().split()
+    if not words:
+        return False
+    hits = sum(1 for w in words if w in hay)
+    return hits / len(words) >= 0.7
+
+
+def _clean_number(raw: str) -> Optional[float]:
+    raw = raw.strip()
+    neg = raw.startswith("(") and raw.endswith(")")
+    raw = raw.strip("()").replace(".", "").replace(",", "")
+    if not raw.lstrip("-").isdigit():
+        return None
+    val = float(raw)
+    return -val if neg else val
 
 
 def _extract_income_statement(pdf_bytes: bytes) -> list[dict]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        log.info("ANTHROPIC_API_KEY not set — skipping financial report generation")
+    try:
+        import pytesseract  # noqa: F401
+    except ImportError:
+        log.warning("pytesseract not installed — skipping financial report generation")
         return []
 
-    images_b64 = _render_pages_to_base64(pdf_bytes)
-    if not images_b64:
-        return []
+    rows_found: dict[str, dict] = {}
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages[:_MAX_PAGES]:
+                im = page.to_image(resolution=200).original
+                try:
+                    row_texts = _cluster_rows(im)
+                except Exception as e:
+                    log.warning("OCR failed on a page: %s", e)
+                    continue
 
-    import anthropic
+                for line in row_texts:
+                    hay = unidecode(line).lower()
+                    for vn_label, en_label in _LINE_ITEMS:
+                        if en_label in rows_found:
+                            continue
+                        if not _line_matches(vn_label, hay):
+                            continue
+                        nums = [
+                            v for v in (_clean_number(m) for m in _NUM_RE.findall(line))
+                            if v is not None and abs(v) >= 1000
+                        ]
+                        if not nums:
+                            continue
+                        current = nums[-2] if len(nums) >= 2 else nums[-1]
+                        prior = nums[-1] if len(nums) >= 2 else None
+                        rows_found[en_label] = {
+                            "label": en_label, "label_vn": vn_label,
+                            "current": current, "prior": prior,
+                        }
+                        break
 
-    client = anthropic.Anthropic(api_key=api_key)
-    content = [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img}}
-        for img in images_b64
-    ]
-    content.append({"type": "text", "text": _EXTRACTION_PROMPT})
-
-    response = client.messages.create(
-        model=_MODEL,
-        max_tokens=4096,
-        output_config={"format": {"type": "json_schema", "schema": _INCOME_STATEMENT_SCHEMA}},
-        messages=[{"role": "user", "content": content}],
-    )
-    if response.stop_reason == "refusal":
-        log.warning("Claude declined the financial-statement extraction request")
-        return []
-
-    text = next((b.text for b in response.content if b.type == "text"), "")
-    data = json.loads(text)
-    if not data.get("found"):
+                if len(rows_found) >= _MIN_ROWS_TO_STOP:
+                    break
+    except Exception as e:
+        log.warning("Failed to open/OCR PDF for income statement: %s", e)
         return []
 
     return [
-        {
-            "label": it["label_en"],
-            "label_vn": it["label_vn"],
-            "current": it["current_period"],
-            "prior": it["prior_period"],
-        }
-        for it in data.get("line_items", [])
+        rows_found[en_label] for _, en_label in _LINE_ITEMS if en_label in rows_found
     ]
 
 
@@ -163,11 +214,15 @@ def _fmt_number(v: Optional[float]) -> str:
     return "—" if v is None else f"{v:,.0f}"
 
 
-def _fmt_change(current: Optional[float], prior: Optional[float]) -> str:
+def _pct_change(current: Optional[float], prior: Optional[float]) -> Optional[float]:
     if current is None or prior is None or prior == 0:
-        return "—"
-    pct = (current - prior) / abs(prior) * 100
-    return f"{'+' if pct >= 0 else ''}{pct:.1f}%"
+        return None
+    return (current - prior) / abs(prior) * 100
+
+
+def _fmt_change(current: Optional[float], prior: Optional[float]) -> str:
+    pct = _pct_change(current, prior)
+    return "—" if pct is None else f"{'+' if pct >= 0 else ''}{pct:.1f}%"
 
 
 def _safe_slug(text: str, maxlen: int = 60) -> str:
@@ -180,18 +235,40 @@ def _build_docx(item: dict, rows: list[dict]) -> Path:
     from docx.shared import Pt
 
     _OUTPUT_DIR.mkdir(exist_ok=True)
+    by_label = {r["label"]: r for r in rows}
+
     doc = Document()
 
-    doc.add_heading(item["company"], level=1)
-    doc.add_paragraph().add_run(item["title"]).italic = True
-
+    # Header — company, report title, date (mirrors the header block of a
+    # standard sell-side earnings note: entity, title, publish date).
+    doc.add_heading(f"{item['company']} — Income Statement (YoY)", level=1)
+    sub = doc.add_paragraph()
+    sub.add_run(item["title"]).italic = True
     meta = doc.add_paragraph()
     meta_run = meta.add_run(
-        f"Published: {item.get('published') or '—'}\nSource: {item['url']}\n"
-        "Figures extracted from the source PDF via AI vision — verify against the original before relying on them."
+        f"Published: {item.get('published') or '—'}   |   Source: {item['url']}\n"
+        "Figures OCR-extracted from the source PDF — verify against the original before relying on them."
     )
     meta_run.font.size = Pt(9)
 
+    # Highlights — short bullet summary of the key lines, each with its YoY
+    # change, in the spirit of a sell-side note's headline bullets.
+    doc.add_heading("Highlights", level=2)
+    any_highlight = False
+    for label in _HIGHLIGHT_LABELS:
+        r = by_label.get(label)
+        if not r or r["current"] is None:
+            continue
+        any_highlight = True
+        change = _fmt_change(r["current"], r["prior"])
+        p = doc.add_paragraph(style="List Bullet")
+        p.add_run(f"{label}: ").bold = True
+        p.add_run(f"{_fmt_number(r['current'])} VND ({change} YoY)")
+    if not any_highlight:
+        doc.add_paragraph("No key metrics were confidently extracted — see the table below for what was found.")
+
+    # Full line-item table — this period vs same period last year, the
+    # comparison actually printed in a standalone quarterly/annual filing.
     doc.add_heading("Income Statement — Year over Year", level=2)
     table = doc.add_table(rows=1, cols=4)
     table.style = "Light Grid Accent 1"
@@ -220,7 +297,7 @@ def _build_docx(item: dict, rows: list[dict]) -> Path:
 
 
 async def maybe_generate_report(item: dict) -> Optional[Path]:
-    """Best-effort: download + read + build a YoY income-statement DOCX for a
+    """Best-effort: download + OCR + build a YoY income-statement DOCX for a
     financial-statement PDF. Returns the file path, or None if `item` isn't a
     financial-statement PDF, extraction found nothing, or any step failed."""
     if not is_financial_statement(item):
