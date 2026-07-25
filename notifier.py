@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+from pathlib import Path
 from typing import Iterable
 
 from telegram import Bot
@@ -93,6 +94,23 @@ class Notifier:
                 sent += 1
             await asyncio.sleep(1.2)  # ~30 msgs/min, well under Telegram cap
         return sent
+
+    async def send_document(self, path: Path, caption: str = "") -> bool:
+        try:
+            with open(path, "rb") as f:
+                await self.bot.send_document(
+                    chat_id=self.chat_id,
+                    document=f,
+                    filename=path.name,
+                    caption=caption[:1024] if caption else None,
+                    read_timeout=60,
+                    write_timeout=60,
+                    connect_timeout=15,
+                )
+            return True
+        except TelegramError as e:
+            log.error("Telegram document send failed for %s: %s", path.name, e)
+            return False
 
     async def send_admin(self, text: str) -> None:
         try:

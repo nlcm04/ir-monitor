@@ -5,3 +5,4 @@ __pycache__/
 # data/*.db   ← intentionally tracked so GitHub Actions can persist state
 logs/*.log*
 .playwright/
+reports/*.docx

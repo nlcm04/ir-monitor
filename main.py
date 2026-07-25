@@ -22,6 +22,7 @@ from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 
 import database
+import financial_report
 from config import SITES
 from logger import get_logger
 from notifier import Notifier
@@ -36,6 +37,29 @@ def _within_business_hours(tz: ZoneInfo) -> bool:
     end = int(os.getenv("BUSINESS_HOUR_END", "19"))
     now = datetime.now(tz)
     return start <= now.hour < end
+
+
+async def _notify_with_reports(items: list[dict], notifier: Notifier, site_key: str) -> int:
+    """Send the normal Telegram alerts, then best-effort attach a
+    year-over-year income-statement DOCX for any item that's a financial-
+    statement PDF. Report generation failures are logged and never block or
+    fail the alert itself."""
+    sent = await notifier.send_many(items)
+    for it in items:
+        if not financial_report.is_financial_statement(it):
+            continue
+        try:
+            path = await financial_report.maybe_generate_report(it)
+        except Exception as e:  # noqa: BLE001 — best-effort, never blocks alerting
+            log.warning("[%s] financial report generation failed: %s", site_key, e)
+            continue
+        if path is None:
+            continue
+        try:
+            await notifier.send_document(path, caption=it["title"][:1024])
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] failed to send financial report doc: %s", site_key, e)
+    return sent
 
 
 async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier,
@@ -89,7 +113,7 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
         if to_notify:
             sent = 0
             try:
-                sent = await notifier.send_many(to_notify)
+                sent = await _notify_with_reports(to_notify, notifier, site["key"])
             except Exception as e:  # noqa: BLE001 — mirror the main notify path's guard
                 log.error("[%s] unexpected notification error during seeding: %s", site["key"], e)
             finally:
@@ -99,7 +123,7 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
 
     sent = 0
     try:
-        sent = await notifier.send_many(new_items)
+        sent = await _notify_with_reports(new_items, notifier, site["key"])
     except Exception as e:  # noqa: BLE001
         # Unexpected notification failure (not TelegramError — those are caught
         # inside send_many).  Still record items below so they are not re-sent
