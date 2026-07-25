@@ -1,0 +1,54 @@
+name: Test Financial Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_key:
+        description: "Optional: test one site only (e.g. dhc_fin). Leave blank to try each candidate site until one works."
+        required: false
+        default: ""
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # PlaywrightScraper's context manager launches Firefox unconditionally
+      # in __aenter__, even though the financial-report candidate sites all
+      # scrape via aiohttp — so the browser still needs to be installed.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-firefox-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Playwright + Firefox
+        run: |
+          python -m playwright install firefox
+          python -m playwright install-deps firefox
+
+      - name: Create .env
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          EOF
+
+      - name: Run financial report test
+        run: python test_financial_report.py ${{ github.event.inputs.site_key }}
