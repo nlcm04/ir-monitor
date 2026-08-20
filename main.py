@@ -39,13 +39,19 @@ def _within_business_hours(tz: ZoneInfo) -> bool:
     return start <= now.hour < end
 
 
-async def _notify_with_reports(items: list[dict], notifier: Notifier, site_key: str) -> int:
+async def _notify_with_reports(items: list[dict], notifier: Notifier, site_key: str) -> list[dict]:
     """Send the normal Telegram alerts, then best-effort attach a
     year-over-year income-statement DOCX for any item that's a financial-
     statement PDF. Report generation failures are logged and never block or
-    fail the alert itself."""
-    sent = await notifier.send_many(items)
+    fail the alert itself.
+
+    Returns the subset of `items` whose Telegram alert failed to send, so the
+    caller can avoid recording them as processed and retry them next cycle."""
+    failed = await notifier.send_many(items)
+    failed_ids = {id(it) for it in failed}
     for it in items:
+        if id(it) in failed_ids:
+            continue  # alert never went out — don't attach a report to it
         if not financial_report.is_financial_statement(it):
             continue
         try:
@@ -59,7 +65,7 @@ async def _notify_with_reports(items: list[dict], notifier: Notifier, site_key: 
             await notifier.send_document(path, caption=it["title"][:1024])
         except Exception as e:  # noqa: BLE001
             log.warning("[%s] failed to send financial report doc: %s: %s", site_key, type(e).__name__, e)
-    return sent
+    return failed
 
 
 async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier,
@@ -111,29 +117,53 @@ async def _scrape_one(scraper: PlaywrightScraper, site: dict, notifier: Notifier
         log.info("[%s] seeded %d historical items (no alerts)", site["key"], len(to_seed))
 
         if to_notify:
-            sent = 0
+            failed = to_notify  # conservative default: assume none confirmed sent
             try:
-                sent = await _notify_with_reports(to_notify, notifier, site["key"])
+                failed = await _notify_with_reports(to_notify, notifier, site["key"])
             except Exception as e:  # noqa: BLE001 — mirror the main notify path's guard
                 log.error("[%s] unexpected notification error during seeding: %s", site["key"], e)
             finally:
-                database.record(to_notify)  # always record — we attempted to alert
-            log.info("[%s] notified %d newest item(s) on first run", site["key"], sent)
+                failed_ids = {id(it) for it in failed}
+                confirmed = [it for it in to_notify if id(it) not in failed_ids]
+                if confirmed:
+                    database.record(confirmed)  # only record items actually delivered
+                if failed:
+                    log.error("[%s] %d/%d item(s) failed to alert during seeding — will retry next cycle",
+                              site["key"], len(failed), len(to_notify))
+                    await notifier.send_admin(
+                        f"⚠️ <b>Alert delivery failed</b> for {len(failed)}/{len(to_notify)} item(s) on "
+                        f"<b>{site['company']}</b> during first-run seeding.\n"
+                        "They will be retried on the next cycle."
+                    )
+            log.info("[%s] notified %d/%d newest item(s) on first run",
+                      site["key"], len(to_notify) - len(failed), len(to_notify))
         return
 
-    sent = 0
+    failed = new_items  # conservative default: assume none confirmed sent
     try:
-        sent = await _notify_with_reports(new_items, notifier, site["key"])
+        failed = await _notify_with_reports(new_items, notifier, site["key"])
     except Exception as e:  # noqa: BLE001
         # Unexpected notification failure (not TelegramError — those are caught
-        # inside send_many).  Still record items below so they are not re-sent
-        # on the next cycle.
+        # inside send_many). We don't know how much of the batch got through,
+        # so `failed` keeps its conservative default (the whole batch): nothing
+        # is recorded below and everything is retried next cycle.
         log.error("[%s] unexpected notification error: %s", site["key"], e)
     finally:
-        database.record(new_items)  # always record — we attempted to alert
+        failed_ids = {id(it) for it in failed}
+        confirmed = [it for it in new_items if id(it) not in failed_ids]
+        if confirmed:
+            database.record(confirmed)  # only record items actually delivered
+        if failed:
+            log.error("[%s] %d/%d item(s) failed to alert — will retry next cycle",
+                      site["key"], len(failed), len(new_items))
+            await notifier.send_admin(
+                f"⚠️ <b>Alert delivery failed</b> for {len(failed)}/{len(new_items)} item(s) on "
+                f"<b>{site['company']}</b>.\nThey will be retried on the next cycle."
+            )
         if not database.is_seeded(site["key"]):
             database.mark_seeded(site["key"])
 
+    sent = len(new_items) - len(failed)
     log.info("[%s] alerted %d/%d new items", site["key"], sent, len(new_items))
 
 

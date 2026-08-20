@@ -85,15 +85,19 @@ class Notifier:
                     log.error("Telegram send failed for %s: %s", item.get("url"), e)
         return False
 
-    async def send_many(self, items: Iterable[dict]) -> int:
-        """Send alerts sequentially with small spacing to respect rate limits."""
-        sent = 0
+    async def send_many(self, items: Iterable[dict]) -> list[dict]:
+        """Send alerts sequentially with small spacing to respect rate limits.
+
+        Returns the subset of `items` that failed to send (after their own
+        internal retries), so the caller can tell delivered items apart from
+        ones that never went out and must not be marked as processed."""
+        failed: list[dict] = []
         for it in items:
             ok = await self.send_article(it)
-            if ok:
-                sent += 1
+            if not ok:
+                failed.append(it)
             await asyncio.sleep(1.2)  # ~30 msgs/min, well under Telegram cap
-        return sent
+        return failed
 
     async def send_document(self, path: Path, caption: str = "") -> bool:
         try:
