@@ -42,6 +42,8 @@ def _mode_label(site: dict) -> str:
     """Human-readable scrape mode for the site."""
     if site.get("intercept_url_contains"):
         return "api-intercept"
+    if site.get("mode") == "json":
+        return "aiohttp-json"
     if site.get("mode") == "requests":
         return "aiohttp"
     return "playwright"

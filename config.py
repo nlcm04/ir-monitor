@@ -67,29 +67,31 @@ SITES = [
     {
         "key": "phutai",
         "company": "Phú Tài (PTB)",
-        "url": "https://phutai.com.vn/tin-tuc-va-su-kien/",
-        # WordPress — fully server-side rendered, no JS needed.
-        "mode": "requests",
-        "item": "div.content-cate",
-        "title": "h3.title-cate",   # <h3> holds the text; img link has same href
-        "link": "a.img-cate",        # use image link href — same URL, avoids empty-text issue
-        "date": None,
-        "date_formats": [],
+        # Phú Tài relaunched on a Next.js (App Router) site in 2026. The old
+        # WordPress paths (/tin-tuc-va-su-kien/, /category/bao-cao-tai-chinh/)
+        # now 404. News & events are served by a Payload CMS JSON API — hit it
+        # directly (no HTML/JS to render, no fragile Tailwind selectors).
+        "mode": "json",
+        "url": "https://api.phutai.com.vn/api/posts?limit=40&sort=-publishedAt&depth=1",
+        "json_parser": "phutai_posts",
+        # Article pages live under the front-end site, not the API host.
         "base_url": "https://phutai.com.vn",
     },
     {
         "key": "ptb_fin",
         "company": "Phú Tài (PTB)",
-        "url": "https://phutai.com.vn/category/bao-cao-tai-chinh/",
-        # SSR page: each report row is div.row.item-row containing a date paragraph
-        # and a title/link paragraph. Date is raw text node after an icon in p.text-stakeholders-2.
-        "mode": "requests",
-        "item": "div.row.item-row",
-        "title": "p.title-stakeholders a",
-        "link": "p.title-stakeholders a",
-        "date": "p.text-stakeholders-2",
-        "date_formats": ["%d/%m/%Y"],
-        "base_url": "https://phutai.com.vn",
+        # Investor-relations filings (công bố thông tin, báo cáo tài chính,
+        # báo cáo thường niên, …) come from the same Payload CMS "documents"
+        # collection. Each doc carries a direct PDF (file.url), so financial
+        # statements flow straight into the OCR income-statement report path.
+        # The site filters categories client-side only, so we take the full
+        # documents feed; financial_report.is_financial_statement() already
+        # gates which items get a report attached.
+        "mode": "json",
+        "url": "https://api.phutai.com.vn/api/documents?limit=40&sort=-publishedAt&depth=1",
+        "json_parser": "phutai_documents",
+        # documentUrl values are relative to the API host.
+        "base_url": "https://api.phutai.com.vn",
     },
     {
         "key": "thienlong",

@@ -204,6 +204,8 @@ class PlaywrightScraper:
             try:
                 if site.get("intercept_url_contains"):
                     return await self._scrape_api_intercept(site)
+                if site.get("mode") == "json":
+                    return await self._scrape_json(site)
                 if site.get("mode") == "requests":
                     return await self._scrape_requests(site)
                 return await self._scrape_html(site)
@@ -259,6 +261,45 @@ class PlaywrightScraper:
         if not items:
             raise ScraperError(
                 f"No items parsed for {site['key']} (requests mode) — selectors may be stale"
+            )
+        return items
+
+    async def _scrape_json(self, site: dict) -> list[dict]:
+        """Fetch a JSON REST endpoint and parse it into items.
+
+        Same lightweight aiohttp path as _scrape_requests (no browser), but the
+        response is a JSON API rather than HTML — used for sites that expose a
+        clean backend feed (e.g. Phú Tài's Payload CMS). A per-site
+        `json_parser` selects how to map the payload to {title, url, published}.
+        """
+        import aiohttp
+
+        ua = random.choice(USER_AGENTS)
+        headers = {**FIREFOX_HEADERS, "User-Agent": ua, "Accept": "application/json, */*"}
+        headers.update(site.get("extra_headers", {}))
+
+        url = site["url"]
+        if site.get("url_year_template"):
+            url = url.format(year=datetime.now().year)
+
+        connector = self._build_aiohttp_connector()
+        timeout = aiohttp.ClientTimeout(total=60)
+
+        log.info("[%s] json-mode GET %s", site["key"], url)
+        async with aiohttp.ClientSession(
+            headers=headers,
+            connector=connector,
+            timeout=timeout,
+        ) as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                # content_type=None: some hosts mislabel the MIME type.
+                data = await resp.json(content_type=None)
+
+        items = self._parse_json(data, site)
+        if not items:
+            raise ScraperError(
+                f"No items parsed for {site['key']} (json mode) — API shape may have changed"
             )
         return items
 
@@ -430,6 +471,69 @@ class PlaywrightScraper:
         for _ in range(steps):
             await page.mouse.wheel(0, 1500)
             await asyncio.sleep(random.uniform(0.4, 0.9))
+
+    @staticmethod
+    def _parse_json(data: dict, site: dict) -> list[dict]:
+        """Map a JSON API payload to a list of {title, url, published} items,
+        dispatching on the site's `json_parser`."""
+        parser = site.get("json_parser", "")
+        base = site.get("base_url", "")
+
+        # Payload CMS list responses wrap rows in a "docs" array.
+        docs = data.get("docs", []) if isinstance(data, dict) else []
+
+        items: list[dict] = []
+        seen_urls: set[str] = set()
+
+        if parser == "phutai_posts":
+            # News/events posts. The article page lives on the front-end site at
+            # /vi/news-events/<slug>; the API only carries the slug.
+            for doc in docs:
+                title = (doc.get("title") or "").strip()
+                slug = (doc.get("slug") or "").strip()
+                if not title or not slug:
+                    continue
+                url = f"{base.rstrip('/')}/vi/news-events/{slug}"
+                pub = _parse_date(
+                    doc.get("publishedAt") or doc.get("createdAt") or "",
+                    ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S"],
+                )
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                items.append({"title": title, "url": url, "published": pub})
+
+        elif parser == "phutai_documents":
+            # IR filings. Each row exposes a downloadable PDF either as a single
+            # `file` object (current shape) or a `documents[]` array (older
+            # shape) — support both so a backend tweak doesn't break us.
+            for doc in docs:
+                title = (doc.get("title") or "").strip()
+                href = ""
+                f = doc.get("file")
+                if isinstance(f, dict):
+                    href = (f.get("url") or "").strip()
+                if not href:
+                    for d in (doc.get("documents") or []):
+                        if isinstance(d, dict) and d.get("documentUrl"):
+                            href = d["documentUrl"].strip()
+                            break
+                if not title or not href:
+                    continue
+                url = _absolutize(base, href)
+                pub = _parse_date(
+                    doc.get("publishedAt") or doc.get("createdAt") or "",
+                    ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S"],
+                )
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                items.append({"title": title, "url": url, "published": pub})
+
+        else:
+            raise ScraperError(f"Unknown json_parser '{parser}' for {site['key']}")
+
+        return items[:40]
 
     @staticmethod
     def _parse(html: str, site: dict) -> list[dict]:
