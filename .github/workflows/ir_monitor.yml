@@ -1,0 +1,117 @@
+name: IR Monitor
+
+on:
+  schedule:
+    # ── Vietnam time (ICT = UTC+7) ──────────────────────────────────────────
+    # Every hour during core business hours: 07:00–21:00 ICT (00:00–14:00 UTC)
+    # GitHub reliably fires hourly schedules at fixed :00 marks.
+    # Sub-hourly (*/15, */30) are throttled/skipped — do NOT use them.
+    - cron: "0 0-14 * * *"      # 07:00–21:00 ICT  every 1h  (15 runs/day)
+    # Light overnight coverage: 23:00, 01:00, 03:00, 05:00 ICT
+    - cron: "0 16,18,20,22 * * *"  # 23:00–05:00 ICT  every 2h  (4 runs/night)
+  workflow_dispatch:                        # allows manual trigger from GitHub UI
+
+concurrency:
+  group: ir-monitor
+  cancel-in-progress: false               # let the running job finish; queue the next
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write                       # allows git push with GITHUB_TOKEN
+
+    steps:
+      # ── 1. Checkout including the db file (if it exists) ──────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v5
+        with:
+          # fetch full history so we can commit back
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 3. Playwright ─────────────────────────────────────────────────────
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-firefox-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Playwright + Firefox
+        run: |
+          python -m playwright install firefox
+          python -m playwright install-deps firefox
+
+      # ── 3b. Tesseract OCR (financial-statement PDFs are scanned images) ────
+      - name: Install Tesseract OCR + Vietnamese language data
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-vie
+
+      # ── 4. Write .env from GitHub Secrets ─────────────────────────────────
+      - name: Create .env
+        run: |
+          cat > .env <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          HEADLESS=true
+          SEED_ON_FIRST_RUN=true
+          SEED_NOTIFY_NEWEST=1
+          TIMEZONE=Asia/Ho_Chi_Minh
+          NAV_TIMEOUT_MS=60000
+          SCRAPER_RETRIES=2
+          MAX_ALERTS_PER_CYCLE=8
+          EOF
+
+      # ── 5. Ensure data/ folder exists (first run) ─────────────────────────
+      - name: Prepare data directory
+        run: mkdir -p data
+
+      # ── 6. Unit-test error handling before committing to a full scrape ──
+      - name: Run error-handling tests
+        run: python test_error_handling.py
+
+      # ── 7. Run one scrape cycle ───────────────────────────────────────────
+      - name: Run scraper
+        run: python main.py --once
+
+      # ── 8. Commit the updated SQLite DB back to the repo ──────────────────
+      #    This is how state persists between runs (no external DB needed).
+      #    Rebase-and-retry on push: a run takes several minutes end-to-end,
+      #    so any other commit landing on main in that window (a manual push,
+      #    an overlapping run) makes a plain `git push` fail non-fast-forward.
+      #    Without the retry, that commit is silently dropped and the newly-
+      #    seen article fingerprints never persist, risking duplicate alerts
+      #    next cycle.
+      - name: Commit updated database
+        run: |
+          git config user.name  "IR Monitor Bot"
+          git config user.email "ir-monitor-bot@users.noreply.github.com"
+          git add data/ir_monitor.db
+          if git diff --cached --quiet; then
+            echo "No DB changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update IR monitor DB [skip ci]"
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt) — rebasing onto latest main and retrying"
+            git fetch origin main
+            git rebase origin/main
+            sleep $(( (RANDOM % 10) + 1 ))
+          done
+          echo "Push failed after 5 attempts"
+          exit 1
